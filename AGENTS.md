@@ -149,7 +149,7 @@ class Class:
 
 ## Simplicity and Error Handling
 
-1. Prefer simple code over defensive boilerplate.
+1. Reason through requirements, assumptions, and likely failure modes before writing code. Prefer simple code over defensive programming. Add guards only for concrete requirements or observed failures, not hypothetical cases.
 2. Assume internal inputs satisfy documented contracts. Do not repeatedly validate values already guaranteed by the calling code.
 3. Avoid speculative `if` checks, redundant `raise` statements, and excessive `try/except` blocks.
 4. Validate inputs at meaningful system boundaries, especially when reading external data, configuration, or API responses.
@@ -279,7 +279,7 @@ Do not combine unrelated changes into one commit. Do not create commits unless e
 02. Preserve existing functionality unless the task explicitly requires changing it.
 03. When replacing an implementation, remove obsolete functions, classes, imports, configuration, and references that are no longer used.
 04. Do not leave commented-out implementations, redundant wrappers, or compatibility code that serves no purpose.
-05. Update affected tests when behavior or interfaces change. Add focused tests for new functionality and important regressions.
+05. Do not write large numbers of tests. Keep the test suite small and focused on critical behavior and important regressions. Update affected tests when behavior or interfaces change. Exhaustive coverage of every function, branch, or component is not required. Do not add tests solely to increase coverage or mirror implementation details; reason about correctness before deciding what needs testing.
 06. Prefer modifying existing code over introducing parallel implementations of the same behavior.
 07. Keep changes minimal, readable, idiomatic, and consistent with project conventions.
 08. Do not perform unrelated cleanup outside the task scope.
