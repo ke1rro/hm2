@@ -1,0 +1,9 @@
+number = true
+wrap = "keep"
+end_of_line = "lf"
+validate = true
+extensions = ["gfm", "frontmatter"]
+codeformatters = []
+
+[plugin.tables]
+compact_tables = false
