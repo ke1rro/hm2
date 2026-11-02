@@ -207,7 +207,7 @@ Report failures rather than weakening checks to make them pass.
 02. Use lazy evaluation only for multi-step pipelines that benefit from query optimization or streaming processing. Avoid lazy evaluation for single-step operations.
 03. Preserve existing experiment seeds and splits unless explicitly changing the experiment. Use seed 2026 for new experiments. Keep experiments reproducible; document unavoidable GPU nondeterminism.
 04. Keep training, validation, and testing boundaries clear. Prevent data leakage.
-05. Record configurations, seeds, metrics, and relevant artifacts in the experiment notebook and, where useful, `.artifacts/`. Keep a concise comparison table containing the model, changed parameter, validation protocol, and result.
+05. Record configurations, seeds, metrics, and relevant outputs in the experiment notebook and appropriate project output directories. Store dataset metadata in `data/metadata/`. Keep a concise comparison table containing the model, changed parameter, validation protocol, and result.
 06. Compare experiments against a consistent baseline. Do not report unmeasured improvements or invent results.
 07. Split by video sequence (`clip`), never by randomly assigned frames. Keep the provided validation set separate, and avoid using test frames or leaderboard feedback to choose preprocessing or hyperparameters.
 08. Track object counts per class, box sizes, scene density, frame resolutions, and distribution changes across clips during EDA.
@@ -260,9 +260,9 @@ Do not combine unrelated changes into one commit. Do not create commits unless e
 
 ## Artifacts and Research Notes
 
-01. Use `.artifacts/` as the workspace for temporary research outputs, experiment results, debugging notes, and agent-generated reports.
+01. Reserve `.artifacts/` exclusively for AI working notes, temporary investigation outputs, and agent-generated reports. It is not a project data or runtime output directory.
 02. Store useful intermediate findings when they help explain decisions, reproduce experiments, or continue work in a later session.
-03. Allowed artifacts include Markdown notes, logs, CSV files, metrics, experiment configurations, profiling results, and debugging reports.
+03. Do not reference or depend on `.artifacts/` in project code, notebooks, or runtime configuration. Do not store datasets, prepared data, metadata caches, or image previews there. Store project data and derived metadata under `data/`, such as `data/metadata/` and `data/previews/`, and keep them excluded from Git.
 04. Organize artifacts by task or experiment. Use descriptive filenames and avoid unnecessary files.
 05. Prefer updating an existing artifact over creating multiple overlapping reports.
 06. Do not create documentation or artifacts for trivial changes.
