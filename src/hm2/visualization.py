@@ -110,6 +110,37 @@ def draw_frame_pair(
     return result
 
 
+def draw_prediction_pair(
+    image_path: Path,
+    objects: pl.DataFrame,
+    ignored: pl.DataFrame,
+    predictions: pl.DataFrame,
+    panel_width: int = 700,
+) -> Image.Image:
+    """Compare ground truth with scored predictions using the same class and ignore colors.
+
+    Args:
+        image_path: Original source image.
+        objects: Ground truth with zero-based visualization class IDs.
+        ignored: Unique ignored-region geometries for this frame.
+        predictions: Display-filtered predictions with zero-based class IDs and pixel xywh.
+        panel_width: Maximum width of each panel.
+
+    Returns:
+        A ground-truth panel beside a prediction panel, with ignored areas visible in both.
+    """
+    ground_truth = draw_frame(image_path, objects, ignored, panel_width, objects.height <= 40)
+    predicted = draw_frame(image_path, predictions, ignored, panel_width, predictions.height <= 40)
+    result = Image.new("RGB", (ground_truth.width * 2, ground_truth.height + 24), "white")
+    result.paste(ground_truth, (0, 24))
+    result.paste(predicted, (ground_truth.width, 24))
+    drawing = ImageDraw.Draw(result)
+    font = ImageFont.load_default(size=15)
+    drawing.text((8, 3), "Ground truth", fill="black", font=font)
+    drawing.text((ground_truth.width + 8, 3), "Predictions", fill="black", font=font)
+    return result
+
+
 def draw_crop(
     image_path: Path,
     box: tuple[float, float, float, float],
