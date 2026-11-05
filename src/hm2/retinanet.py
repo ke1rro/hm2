@@ -3,7 +3,7 @@ import json
 import logging
 import random
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from functools import partial
 from pathlib import Path
 
@@ -25,12 +25,24 @@ from tqdm.notebook import tqdm
 
 from hm2.detection_data import DetectionDataset, make_loader
 from hm2.evaluation import evaluate_coco, predictions_to_coco
+from hm2.experiment_checkpoint import load_checkpoint, save_checkpoint
+from hm2.experiment_names import VARIANTS, descriptive_name
+
+__all__ = [
+    "build_retinanet",
+    "load_checkpoint",
+    "make_optimizer",
+    "predict_loader",
+    "run_smoke_test",
+    "save_checkpoint",
+    "train_steps",
+]
 
 LOGGER = logging.getLogger(__name__)
 
 
 def build_retinanet(
-    run: str,
+    variant: str,
     pretrained: bool = True,
     allow_download: bool = False,
     min_size: int = 640,
@@ -44,7 +56,7 @@ def build_retinanet(
     explicitly for architecture unit tests, never as a pretrained experiment substitute.
 
     Args:
-        run: R0 baseline, R1 smaller anchors, or R2 DIoU regression.
+        variant: standard_anchors, smaller_anchors, or diou_regression.
         pretrained: Whether to load COCO detector weights.
         allow_download: Whether an explicitly authorized missing-weight download is allowed.
         min_size: Shared shorter-side resize in model pixels.
@@ -54,8 +66,9 @@ def build_retinanet(
     Returns:
         A nine-class TorchVision RetinaNet with the requested isolated modification.
     """
-    if run not in {"R0", "R1", "R2"}:
-        raise ValueError("Expected run R0, R1, or R2.")
+    variant = descriptive_name(variant)
+    if variant not in VARIANTS:
+        raise ValueError(f"Expected a RetinaNet variant from {VARIANTS}.")
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
@@ -87,14 +100,14 @@ def build_retinanet(
     )
     head.conv.load_state_dict(previous_head.conv.state_dict())
     model.head.classification_head = head
-    if run == "R1":
+    if variant == "smaller_anchors":
         smaller_sizes = tuple(
             tuple(size // 2 for size in level) for level in model.anchor_generator.sizes
         )
         model.anchor_generator = AnchorGenerator(
             smaller_sizes, model.anchor_generator.aspect_ratios
         )
-    if run == "R2":
+    if variant == "diou_regression":
         version = tuple(int(part) for part in torchvision.__version__.split("+")[0].split(".")[:2])
         if version < (0, 16) or '"diou"' not in inspect.getsource(_box_loss):
             raise RuntimeError("This TorchVision box-loss implementation has not exposed DIoU.")
@@ -157,6 +170,8 @@ def train_steps(
     config: dict | None = None,
     checkpoint_interval: int = 250,
     max_attempts: int | None = None,
+    max_batches: int | None = None,
+    on_step: Callable[[dict], bool] | None = None,
 ) -> list[dict]:
     """Run a bounded optimization loop and record end-to-end step latency and losses.
 
@@ -178,6 +193,8 @@ def train_steps(
         config: Exact experiment configuration saved with checkpoints.
         checkpoint_interval: Number of loop steps between checkpoint saves.
         max_attempts: Optional hard attempt limit for a bounded smoke diagnostic.
+        max_batches: Stop after this many consumed batches without repeating the loader.
+        on_step: Callback after each consumed batch; return True to stop.
 
     Returns:
         Per-step loss, latency, throughput, LR, and optimizer-update records.
@@ -191,6 +208,8 @@ def train_steps(
     attempts = 0
     progress = tqdm(total=max_steps, disable=not should_show_progress)
     while completed < start_step + max_steps:
+        if max_batches is not None and attempts >= max_batches:
+            break
         if max_attempts is not None and attempts >= max_attempts:
             raise RuntimeError(
                 "Smoke attempt limit reached before the requested optimizer updates."
@@ -202,6 +221,8 @@ def train_steps(
         try:
             images, targets = next(iterator)
         except StopIteration:
+            if max_batches is not None:
+                break
             iterator = iter(loader)
             images, targets = next(iterator)
         nonblocking = is_cuda and bool(getattr(loader, "pin_memory", False))
@@ -243,8 +264,11 @@ def train_steps(
                 "images_per_second": len(images) / seconds,
                 "learning_rate": optimizer.param_groups[0]["lr"],
                 "optimizer_updated": is_updated,
+                "image_count": len(images),
             }
         )
+        if on_step is not None and on_step(history[-1]):
+            break
         if checkpoint_path is not None and is_updated and completed % checkpoint_interval == 0:
             save_checkpoint(
                 checkpoint_path, model, optimizer, scheduler, completed, config or {}, scaler
@@ -261,82 +285,6 @@ def train_steps(
             scaler,
         )
     return history
-
-
-def save_checkpoint(
-    path: Path,
-    model: torch.nn.Module,
-    optimizer: Optimizer,
-    scheduler: LRScheduler,
-    step: int,
-    config: dict,
-    scaler: torch.amp.GradScaler | None = None,
-) -> None:
-    """Save model, optimizer, schedule, AMP, configuration, and RNG states atomically.
-
-    Args:
-        path: Ignored project checkpoint path.
-        model: Detector whose state is saved.
-        optimizer: Stateful training optimizer.
-        scheduler: Stateful learning-rate schedule.
-        step: Number of completed loop steps.
-        config: JSON-compatible experiment settings.
-        scaler: Optional persistent AMP scaler.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    numpy_state = np.random.get_state()
-    state = {
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "scheduler": scheduler.state_dict(),
-        "step": step,
-        "config": config,
-        "scaler": scaler.state_dict() if scaler is not None else None,
-        "torch_rng": torch.get_rng_state(),
-        "python_rng": random.getstate(),
-        "numpy_rng": [numpy_state[0], numpy_state[1].tolist(), *numpy_state[2:]],
-        "cuda_rng": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
-    }
-    temporary = path.with_suffix(".tmp")
-    torch.save(state, temporary)
-    temporary.replace(path)
-    path.with_suffix(".json").write_text(json.dumps(config, indent=2) + "\n")
-
-
-def load_checkpoint(
-    path: Path,
-    model: torch.nn.Module,
-    optimizer: Optimizer,
-    scheduler: LRScheduler,
-    scaler: torch.amp.GradScaler | None = None,
-) -> dict:
-    """Restore training states and random generators from a trusted local checkpoint.
-
-    Args:
-        path: Previously saved local checkpoint.
-        model: Matching experiment architecture.
-        optimizer: Matching optimizer.
-        scheduler: Matching learning-rate schedule.
-        scaler: Optional gradient scaler to restore.
-
-    Returns:
-        Completed step and exact saved configuration for checking the resumed run.
-    """
-    state = torch.load(path, map_location="cpu", weights_only=True)
-    model.load_state_dict(state["model"])
-    optimizer.load_state_dict(state["optimizer"])
-    scheduler.load_state_dict(state["scheduler"])
-    if scaler is not None and state["scaler"] is not None:
-        scaler.load_state_dict(state["scaler"])
-    torch.set_rng_state(state["torch_rng"])
-    random.setstate(state["python_rng"])
-    numpy_state = state["numpy_rng"]
-    np.random.set_state(
-        (numpy_state[0], np.asarray(numpy_state[1], dtype=np.uint32), *numpy_state[2:])
-    )
-    if state["cuda_rng"] is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(state["cuda_rng"])
-    return {"step": state["step"], "config": state["config"]}
 
 
 def predict_loader(
@@ -458,7 +406,7 @@ def run_smoke_test(
         del iterator, loader
     output_directory.mkdir(parents=True, exist_ok=True)
     results: list[dict] = []
-    for run in ("R0", "R1", "R2"):
+    for run in VARIANTS:
         LOGGER.info("Run %s: start bounded pretrained GPU smoke", run)
         model = build_retinanet(
             run,

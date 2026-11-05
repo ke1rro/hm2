@@ -80,6 +80,9 @@ def evaluate_coco(annotation_path: Path, predictions: list[dict], image_ids: lis
     return {
         "map": float(evaluator.stats[0]) if evaluator.stats[0] >= 0 else None,
         "ap50": float(evaluator.stats[1]) if evaluator.stats[1] >= 0 else None,
+        "ap75": float(evaluator.stats[2]) if evaluator.stats[2] >= 0 else None,
+        "ap_medium": float(evaluator.stats[4]) if evaluator.stats[4] >= 0 else None,
+        "ap_large": float(evaluator.stats[5]) if evaluator.stats[5] >= 0 else None,
         "ap_small": float(evaluator.stats[3]) if evaluator.stats[3] >= 0 else None,
         "per_class_ap": per_class,
         "max_dets": [1, 10, 100],

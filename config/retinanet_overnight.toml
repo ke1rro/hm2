@@ -1,0 +1,10 @@
+seed = 2026
+epochs = 5
+batch_size = 2
+num_workers = 2
+min_size = 640
+max_size = 1024
+learning_rate = 0.0025
+flip_probability = 0.5
+subset_stride = 5
+checkpoint_seconds = 600

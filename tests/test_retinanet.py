@@ -3,13 +3,8 @@ from pathlib import Path
 import pytest
 import torch
 
-from hm2.retinanet import (
-    build_retinanet,
-    load_checkpoint,
-    make_optimizer,
-    save_checkpoint,
-    train_steps,
-)
+from hm2.experiment_checkpoint import save_checkpoint
+from hm2.retinanet import build_retinanet, load_checkpoint, make_optimizer, train_steps
 
 
 @pytest.fixture(autouse=True)
@@ -20,9 +15,9 @@ def limited_cpu_threads() -> None:
 
 def test_three_runs_change_only_intended_model_settings() -> None:
     """Catch incompatible anchor counts, head initialization drift, or stacked ablations."""
-    baseline = build_retinanet("R0", pretrained=False, min_size=64, max_size=96)
-    anchors = build_retinanet("R1", pretrained=False, min_size=64, max_size=96)
-    diou = build_retinanet("R2", pretrained=False, min_size=64, max_size=96)
+    baseline = build_retinanet("standard_anchors", pretrained=False, min_size=64, max_size=96)
+    anchors = build_retinanet("smaller_anchors", pretrained=False, min_size=64, max_size=96)
+    diou = build_retinanet("diou_regression", pretrained=False, min_size=64, max_size=96)
     assert baseline.head.classification_head.num_classes == 9
     assert baseline.head.classification_head.cls_logits.out_channels == 81
     assert baseline.anchor_generator.num_anchors_per_location() == [9] * 5

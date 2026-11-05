@@ -7,7 +7,8 @@ video frames. Predict bounding boxes and one of eight classes: person, bicycle, 
 truck, tricycle, bus, and motor. The main deliverable is a reproducible, notebook-first
 comparison of detector families followed by a justified final prediction pipeline.
 
-Use `notebooks/` for the visible research narrative and experiment results. Keep reusable
+Reserve `notebooks/` for research notebooks and results intended for the report. Store
+execution-only Colab and Kaggle notebooks in `experiments/`. Keep reusable
 code in `src/` when it improves clarity, reduces duplication, or makes testing easier.
 Do not introduce unnecessary infrastructure or hide all experiments behind library calls.
 
@@ -216,10 +217,11 @@ Report failures rather than weakening checks to make them pass.
 11. Report consistent detection metrics, including mAP, AP50, AP_small, and inference speed. Keep the validation evaluator's ignore-region and max-detections behavior documented, and distinguish COCO-style metrics from competition-specific scoring if they differ.
 12. Test round-trip coordinate transformations, especially after resizing, padding, tiling, augmentation, and returning predictions to original image coordinates.
 13. Validate submissions against `sample_submission.csv`: one row per test `image_id`, empty predictions allowed, pixel top-left coordinates, and no more than 500 scored detections per image.
+14. Use descriptive experiment names in notebook prose, code, tables, plots, captions, logs, and reports. Name the model and changed setting, such as `standard_anchors`, `smaller_anchors`, or `diou_regression`, and include the data selection when relevant, such as `standard_anchors_stride5` or `smaller_anchors_full`. Use readable labels such as “RetinaNet with smaller anchors (every fifth frame)” in presentation. Do not use opaque numbered run codes as public names. Keep historical checkpoint IDs only at the storage boundary through `hm2.experiment_names`; do not rename existing run directories or change saved checkpoint configurations just to relabel results.
 
 ## Notebooks
 
-01. Use Jupyter for notebooks. Store them as `.ipynb` files in `notebooks/`. Use the project's Python 3.14 environment when compatible, or a documented GPU-compatible kernel locally or remotely. Launch a local JupyterLab session from the repository root with `uv run jupyter lab notebooks/` when appropriate.
+01. Use Jupyter for notebooks. Store report and research notebooks as `.ipynb` files in `notebooks/`; keep execution-only notebooks in `experiments/`. Use the project's Python 3.14 environment when compatible, or a documented GPU-compatible kernel locally or remotely. Launch a local JupyterLab session from the repository root with `uv run jupyter lab notebooks/` when appropriate.
 02. Use dedicated Markdown cells for static explanatory text. Avoid generating narrative paragraphs through `print()` or other output wrappers.
 03. If narrative text has to be generated programmatically (e.g., for reporting variables), use `IPython.display.Markdown` with `display()`. Use `IPython.display.Image` for images and `ipywidgets` for interactive controls.
 04. Do not use `print()` for output in notebooks. Use cell return values or `IPython.display.display()` for multiple outputs.
@@ -232,6 +234,147 @@ Report failures rather than weakening checks to make them pass.
 11. When execution is appropriate, restart the selected kernel and run all cells in order. If suitable compute is unavailable, requirements are unclear, or a run is not authorized, validate notebook schema and code syntax without executing cells. Preserve saved outputs when skipping execution and report that execution was not run, why it was skipped, and which outputs may be stale. Follow `notebooks/README.md` for naming and output conventions, if present.
 12. Prefer numbered notebooks such as `00_data.ipynb`, `01_eda.ipynb`, detector-family experiments, and final inference/submission. Adapt names to the repository instead of enforcing a rigid notebook count.
 13. Keep notebook outputs concise and useful for review. Avoid huge logs, embedded datasets, and unnecessary checkpoint outputs. Make major results understandable without executing expensive training.
+14. Write the notebook as a student research narrative in first-person plural: use **We**, never **I**. Follow the concise structure of `00_data.ipynb` and `01_eda.ipynb`: question, assumptions, visible configuration, execution, measured results, and limitations. Keep the experiment matrix and scientific choices visible even when implementation is imported from `src/`.
+15. Keep AI working notes, agent handoffs, internal task prompts, permission history, and development-status reports out of notebooks. Do not mention AI artifacts or `.artifacts/` in notebook prose, code, metadata, or outputs. Put platform operation instructions here, and keep only concise reproducibility notes in research notebooks. Do not invent student conclusions or replace the student-authored final report.
+16. Use `$...$` for inline Markdown math and `$$...$$` for display math, with display delimiters on their own lines. Do not use `\(...\)` or `\[...\]` in Markdown; this rule does not apply to `.tex` sources.
+
+## Hosted Experiment Execution
+
+Use the existing native notebooks as working examples:
+`experiments/00_retinanet_experiments_colab.ipynb` and
+`experiments/01_retinanet_experiments_kaggle.ipynb`. Keep the research comparison in
+`notebooks/03_retinanet_overnight_results.ipynb`. These execution notebooks use the
+same experiment identities and durable Drive layout, so either platform can resume
+compatible saved work.
+
+### Shared Python modules
+
+- Use `src/hm2/experiment_setup.py` for `stage_dataset`, `verify_dataset`,
+  `dataset_identity`, and `save_experiment_config`. Reuse the existing raw archive,
+  preserve prepared metadata byte for byte, verify real image/target pairs and split
+  boundaries, and compare the exact recipe before resuming.
+- Use `src/hm2/experiment_checkpoint.py` for `save_checkpoint`, `load_checkpoint`,
+  `write_json`, and `publish_snapshot`. These functions accept ordinary PyTorch
+  models and optimizers; reuse them for later detector families. Keep model-specific
+  training and evaluation in the corresponding model module.
+- Use `src/hm2/colab_drive.py` for mounted-Drive synchronization and restoration.
+  Use `src/hm2/drive_api.py` for the same snapshot layout through authenticated Drive
+  API transfers. Reuse these transports rather than adding another storage service.
+- Keep a small bootstrap cell for dependencies and making `src/` importable when
+  opening a hosted notebook from a project ZIP. Move repeated data preparation and
+  checkpoint implementation into these modules. Do not add an experiment-management
+  framework or hide all model configuration behind one orchestration call.
+
+### Input bundle and paths
+
+1. Put the current project ZIP and reusable dataset ZIP in
+   `My Drive/hm2_retinanet/inputs/`. The current filenames are
+   `retinanet_colab_project.zip` and `visdrone_train_val.zip`. The project ZIP contains
+   the current `src/hm2/`, configuration, and prepared `data/metadata/`, including
+   the source hash manifest `colab_inputs.json`. Include all imported modules and
+   verify the ZIP before use. Exclude credentials, `.env`, `.artifacts/`, caches and
+   model weights. Local paths on the Mac are not accessible to hosted runtimes.
+2. Reuse an existing matching extracted dataset. Otherwise, transfer and verify the
+   existing archive and extract onto fast local runtime storage. Check disk capacity
+   for the ZIP, extracted images, checkpoints, and outputs before transferring.
+   Do not read training images directly through a slow Drive mount.
+3. Colab uses `/content/hm2` for code and `/content/visdrone` for images. Kaggle uses
+   `/kaggle/temp/hm2` and `/kaggle/temp/visdrone`, with outputs under
+   `/kaggle/working/runs/`. Preserve the actual source metadata and frame identifiers
+   when changing runtime or detector family.
+4. Local outputs use `runs/<experiment_group>/<batch_id>/`, with one directory per
+   experiment. Durable outputs use `My Drive/hm2_retinanet/batches/<batch_id>/`.
+   The current batch is `retinanet_stride5_full_5epochs_seed2026`. Keep this ID and
+   recipe when continuing it; use a new ID for a scientifically different batch.
+5. When changing shared modules, update and verify the project bundle and its
+   notebook consumers together for the next launch. Do not overwrite a running
+   runtime's source tree, replace its checkpoint files, or restart it for cleanup.
+
+### Colab launch
+
+1. Open the Colab entry notebook manually, select a GPU runtime and run setup.
+   Use native `google.colab.drive.mount("/content/drive")`; the user completes
+   interactive Google authorization. Read the mounted input archives, stage images
+   under `/content`, and use the existing mounted-Drive persistence functions.
+2. Retain the hosted runtime's compatible CUDA PyTorch/TorchVision pair. Install
+   missing auxiliary packages with `uv`; do not apply the local Python 3.14 lock
+   to an incompatible hosted interpreter. Record the actual Python, CUDA, GPU and
+   library versions. The current Kaggle notebook parses on Python 3.11 or newer;
+   the Colab notebook uses Python 3.12 or newer.
+3. Execute the storage write/read/restore probe and inspect the experiment table
+   before starting the explicit training cell. One Run All invocation may perform
+   setup and then training once authorization is complete. Avoid simultaneous runs.
+4. Browser disconnection may leave the runtime running, but session expiry and GPU
+   quota can terminate it. Inspect active execution and saved progress before
+   restarting. Do not promise unattended completion or use anti-idle workarounds.
+5. Colab CLI execution has failed with `RuntimeError: Connection was lost` in this
+   environment. Native notebook execution is the established path. Do not resume
+   CLI troubleshooting or use Computer Use, browser automation, screenshots or
+   VS Code UI automation for Colab access. Keep the existing CLI controller only
+   as a separately invoked legacy interface; do not treat it as verified unattended
+   execution or choose it automatically for new experiments.
+
+### Kaggle launch with the same Google Drive storage
+
+1. Import the Kaggle entry notebook into a private notebook. Enable Internet and
+   GPU. Current experiments use one GPU and batch size 2, even if two T4 devices
+   are visible. Changing GPU count or batch size is an explicit experiment change.
+2. Enable Google Drive API in a Google Cloud project and create a user OAuth client
+   of type **Desktop app**. For an External app in Testing, add the Google account
+   owning the experiment folder under Google Auth Platform → Audience → Test users.
+   The Desktop client JSON alone does not authorize access.
+3. On the Mac, run
+   `uv run python scripts/authorize_drive.py --client-json /absolute/path/to/client_secret.json`.
+   The user completes consent. The command stores refreshable credentials privately
+   in `~/.config/hm2/drive_token.json`. Keep this file out of Git and notebook cells.
+4. Copy the entire authorized token JSON into Kaggle Secret `HM2_DRIVE_TOKEN` and
+   enable the notebook's access to that secret. The notebook reads it through
+   Kaggle's `UserSecretsClient` and authenticates the Drive API. Access tokens
+   refresh automatically; External Testing refresh tokens can expire after seven
+   days, requiring the local authorization command again.
+5. Fetch and verify code, data and checkpoints directly from the existing Drive
+   folder. Check write permission and available quota, then perform a real small
+   checkpoint upload/download/restore probe before expensive training. Do not use
+   `google.colab.drive.mount()` on Kaggle or assume `/kaggle/working` is durable.
+6. Execute setup, inspect restored progress, then start the explicit training cell.
+   For native background execution, use Save Version → Save & Run All with secret
+   access enabled. Stop any interactive training writer before starting that run.
+   Never write to the same batch concurrently from two notebooks or platforms.
+7. A session deadline bounds one invocation, not the total epoch budget. Leave time
+   for a final checkpoint and full validation. On planned pause or interruption,
+   rerun setup and training with the same batch ID and recipe. Completed runs skip
+   and interrupted runs resume automatically from the last verified durable state.
+
+### Automatic checkpoints and recovery
+
+1. Save the complete state: model, optimizer, scheduler, AMP scaler, exact config,
+   completed epoch, global optimizer step, image exposures, history and RNG states.
+   Preserve the sampler order and consumed-batch cursor where supported. Restore
+   the same trainable-parameter policy before loading optimizer state; a fresh
+   randomly initialized model can have a different frozen-backbone policy.
+2. Save locally first using atomic replacement, then publish an immutable snapshot.
+   Checkpoint approximately every 10–15 minutes, at epoch boundaries, after
+   validation and on completion. Keep per-experiment `latest.pt` and `best.pt`;
+   document the best-model criterion, currently highest full-validation COCO mAP.
+3. Synchronize completed files synchronously to Drive. Verify destination hashes,
+   write `manifest.json` last in its generation, and publish `CURRENT.json` only
+   after verification. Retain the preceding good generation until replacement is
+   confirmed. Reuse unchanged files rather than repeatedly uploading model bytes.
+4. A persistence failure stops training. Never rely only on `/content`,
+   `/kaggle/temp` or `/kaggle/working`, and never copy a checkpoint being written.
+   Save metrics, per-class AP, logs, environment and timing with the model state;
+   persist comparison tables and plots after each completed experiment.
+5. On restart, validate experiment ID, architecture, anchors, dataset-selection hash
+   and optimizer configuration before restoring. Resume the existing epoch and
+   scheduler budget, finish pending validation, and skip fully completed runs.
+   If the current generation is corrupt, recover a verified retained predecessor
+   and report the rollback. Never silently return to pretrained initialization.
+6. Work since the last durable save may repeat. Record any rollback or runtime
+   change, and do not claim bit-for-bit CUDA reproducibility or guaranteed session
+   duration. Preserve the specified validation coverage and epoch budget.
+7. Verify refactors locally with focused CPU checkpoint/restore tests and notebook
+   schema/syntax checks. Do not launch training, overwrite live states or rerun GPU
+   notebooks merely to check formatting or documentation.
 
 ## Plotting
 

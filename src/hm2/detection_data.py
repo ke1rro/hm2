@@ -43,11 +43,18 @@ class DetectionDataset(Dataset):
         frames: Selected labeled frame metadata.
         objects: Prepared target-object table, excluding crowd replicas.
         flip_probability: Training-only horizontal flip probability.
+        augmentation_seed: Optional epoch seed for flips independent of worker scheduling.
     """
 
     def __init__(
-        self, root: Path, frames: pl.DataFrame, objects: pl.DataFrame, flip_probability: float = 0.0
+        self,
+        root: Path,
+        frames: pl.DataFrame,
+        objects: pl.DataFrame,
+        flip_probability: float = 0.0,
+        augmentation_seed: int | None = None,
     ) -> None:
+        self.augmentation_seed = augmentation_seed
         self.root = root
         self.frames = frames
         self.records = frames.to_dicts()
@@ -79,7 +86,12 @@ class DetectionDataset(Dataset):
             record["image_key"], (torch.empty((0, 4)), torch.empty(0, dtype=torch.int64))
         )
         boxes = boxes.clone()
-        if self.flip_probability and torch.rand(()) < self.flip_probability:
+        flip_draw = (
+            random.Random(f"{self.augmentation_seed}:{record["image_key"]}").random()
+            if self.augmentation_seed is not None
+            else torch.rand(()).item()
+        )
+        if self.flip_probability and flip_draw < self.flip_probability:
             image = image.flip(-1)
             boxes[:, [0, 2]] = image.shape[-1] - boxes[:, [2, 0]]
         return image, {
