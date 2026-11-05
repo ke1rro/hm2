@@ -218,6 +218,7 @@ Report failures rather than weakening checks to make them pass.
 12. Test round-trip coordinate transformations, especially after resizing, padding, tiling, augmentation, and returning predictions to original image coordinates.
 13. Validate submissions against `sample_submission.csv`: one row per test `image_id`, empty predictions allowed, pixel top-left coordinates, and no more than 500 scored detections per image.
 14. Use descriptive experiment names in notebook prose, code, tables, plots, captions, logs, and reports. Name the model and changed setting, such as `standard_anchors`, `smaller_anchors`, or `diou_regression`, and include the data selection when relevant, such as `standard_anchors_stride5` or `smaller_anchors_full`. Use readable labels such as “RetinaNet with smaller anchors (every fifth frame)” in presentation. Do not use opaque numbered run codes as public names. Keep historical checkpoint IDs only at the storage boundary through `hm2.experiment_names`; do not rename existing run directories or change saved checkpoint configurations just to relabel results.
+15. Store downloaded completed-experiment JSON, logs, previews and submission metadata on Drive. Restore local records only when needed for rerunning, then delete temporary copies unless the user asks to keep them. Version the research notebook outputs, reusable code and instructions for restoring the records from Drive.
 
 ## Notebooks
 
@@ -243,7 +244,7 @@ Report failures rather than weakening checks to make them pass.
 Use the existing native notebooks as working examples:
 `experiments/00_retinanet_experiments_colab.ipynb` and
 `experiments/01_retinanet_experiments_kaggle.ipynb`. Keep the research comparison in
-`notebooks/03_retinanet_overnight_results.ipynb`. These execution notebooks use the
+`notebooks/03_retinanet_results.ipynb`. These execution notebooks use the
 same experiment identities and durable Drive layout, so either platform can resume
 compatible saved work.
 

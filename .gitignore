@@ -239,3 +239,10 @@ lightning_logs/
 
 # Local datasets
 data/*
+
+# Downloaded experiment records
+/results/retinanet/*/
+
+# Generated submission files are kept on Drive and cached locally
+submissions/*.csv
+submissions/*.json

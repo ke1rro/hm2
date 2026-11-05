@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 import polars as pl
 
 from hm2.experiment_names import (
@@ -18,6 +19,21 @@ from hm2.visualization import draw_prediction_pair
 LOGGER = logging.getLogger(__name__)
 RUN_ORDER = tuple(EXPERIMENTS)
 METRICS = ("map", "ap50", "ap75", "ap_small", "ap_medium", "ap_large")
+METRIC_LABELS = {
+    "map": "mAP",
+    "ap50": "AP50",
+    "ap75": "AP75",
+    "ap_small": "AP small",
+    "ap_medium": "AP medium",
+    "ap_large": "AP large",
+}
+PLOT_LABELS = {
+    "standard_anchors_stride5": "Standard anchors (stride 5)",
+    "smaller_anchors_stride5": "Smaller anchors (stride 5)",
+    "standard_anchors_full": "Standard anchors (full data)",
+    "smaller_anchors_full": "Smaller anchors (full data)",
+}
+PLOT_COLORS = dict(zip(PLOT_LABELS.values(), px.colors.qualitative.Plotly, strict=False))
 CONTRASTS = {
     "anchors_stride": ("smaller_anchors_stride5", "standard_anchors_stride5"),
     "anchors_full": ("smaller_anchors_full", "standard_anchors_full"),
@@ -34,19 +50,69 @@ def _save(path: Path, value: dict | list) -> None:
     path.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
 
 
+def aggregate_training_history(history: list[dict], window_size: int = 100) -> list[dict]:
+    """Average training losses in bounded batch windows without crossing epoch boundaries.
+
+    Args:
+        history: Batch records with epoch, attempt, optimizer step, losses and learning rate.
+        window_size: Maximum consecutive batch attempts represented by one curve point.
+
+    Returns:
+        Window records containing mean losses, last learning rate and step, and batch count.
+    """
+    if not history:
+        return []
+    table = pl.from_dicts(history, infer_schema_length=None)
+    return (
+        table.with_columns(((pl.col("attempt") - 1) // window_size).alias("window"))
+        .group_by("epoch", "window", maintain_order=True)
+        .agg(
+            pl.col("attempt").first().alias("first_attempt"),
+            pl.col("attempt").last(),
+            pl.col("step").last(),
+            pl.len().alias("batch_count"),
+            *[
+                pl.col(name).mean()
+                for name in ("loss", "classification", "bbox_regression")
+                if name in table.columns
+            ],
+            pl.col("learning_rate").last(),
+        )
+        .drop("window")
+        .to_dicts()
+    )
+
+
+def _format_chart(figure: go.Figure, height: int = 450) -> None:
+    figure.update_layout(
+        width=1000,
+        height=height,
+        autosize=False,
+        margin={"l": 55, "r": 20, "t": 65, "b": 120},
+        legend={"orientation": "h", "x": 0, "y": -0.18, "yanchor": "top", "title_text": ""},
+    )
+
+
 def _charts(batch_dir: Path, rows: list[dict], histories: list[dict]) -> list[str]:
     paths = []
-    labels = {name: experiment_label(name) for name in RUN_ORDER}
     table = pl.from_dicts(rows, infer_schema_length=None).with_columns(
-        pl.col("experiment_id").replace_strict(labels)
+        pl.col("experiment_id").replace_strict(PLOT_LABELS),
+        (pl.col("train_seconds") / 60).alias("train_minutes"),
     )
     specifications = [
-        ("metrics", table.unpivot(on=list(METRICS), index="experiment_id"), "variable", "value"),
+        (
+            "metrics",
+            table.unpivot(on=list(METRICS), index="experiment_id").with_columns(
+                pl.col("variable").replace_strict(METRIC_LABELS)
+            ),
+            "variable",
+            "value",
+        ),
         ("ap_small", table, "experiment_id", "ap_small"),
-        ("time", table, "experiment_id", "train_seconds"),
+        ("time", table, "experiment_id", "train_minutes"),
     ]
     per_class = [
-        {"experiment_id": experiment_label(row["experiment_id"]), "Class": name, "AP": value}
+        {"experiment_id": PLOT_LABELS[row["experiment_id"]], "Class": name, "AP": value}
         for row in rows
         for name, value in row["per_class_ap"].items()
     ]
@@ -58,21 +124,33 @@ def _charts(batch_dir: Path, rows: list[dict], histories: list[dict]) -> list[st
             x=x,
             y=y,
             color="experiment_id",
+            color_discrete_map=PLOT_COLORS,
+            category_orders={"experiment_id": list(PLOT_LABELS.values())},
             barmode="group",
-            title=name.replace("_", " ").capitalize(),
+            title={
+                "metrics": "Validation AP by metric",
+                "ap_small": "Small-object validation AP",
+                "time": "Training batch time",
+                "per_class": "Validation AP by class",
+            }[name],
             labels={
-                x: x.replace("_", " ").capitalize(),
-                y: y.replace("_", " ").capitalize(),
+                x: "Class" if x == "Class" else "",
+                y: "AP" if y != "train_minutes" else "Minutes",
+                "variable": "Metric",
+                "value": "COCO AP",
                 "experiment_id": "Experiment",
             },
         )
+        _format_chart(figure)
+        if x == "experiment_id":
+            figure.update_xaxes(showticklabels=False, title_text="")
         path = batch_dir / f"{name}.html"
         figure.write_html(path, include_plotlyjs=True)
         figure.write_json(path.with_suffix(".json"))
         paths.append(str(path))
     if histories:
         history = pl.from_dicts(histories, infer_schema_length=None).with_columns(
-            pl.col("experiment_id").replace_strict(labels)
+            pl.col("experiment_id").replace_strict(PLOT_LABELS)
         )
         for column in ("loss", "learning_rate", "classification", "bbox_regression"):
             if column not in history.columns:
@@ -82,13 +160,20 @@ def _charts(batch_dir: Path, rows: list[dict], histories: list[dict]) -> list[st
                 x="global_step",
                 y=column,
                 color="experiment_id",
-                title=f'Training {column.replace("_", " ")}',
+                color_discrete_map=PLOT_COLORS,
+                title={
+                    "loss": "Training loss",
+                    "learning_rate": "Learning rate",
+                    "classification": "Classification loss",
+                    "bbox_regression": "Box regression loss",
+                }[column],
                 labels={
-                    "global_step": "Optimizer step",
-                    column: column.capitalize(),
+                    "global_step": "Updates",
+                    column: "Learning rate" if column == "learning_rate" else "Loss",
                     "experiment_id": "Experiment",
                 },
             )
+            _format_chart(figure)
             path = batch_dir / f"{column}.html"
             figure.write_html(path, include_plotlyjs=True)
             figure.write_json(path.with_suffix(".json"))
@@ -122,7 +207,7 @@ def _missed(objects: pl.DataFrame, predictions: list[dict]) -> int:
     return int((~matched).sum())
 
 
-def _previews(batch_dir: Path, dataset_root: Path, metadata: Path) -> list[dict]:
+def _previews(batch_dir: Path, dataset_root: Path, metadata: Path, output_dir: Path) -> list[dict]:
     frames = pl.read_parquet(metadata / "frames.parquet").filter(pl.col("split") == "val")
     objects = pl.read_parquet(metadata / "objects.parquet").filter(pl.col("split") == "val")
     ignored = pl.read_parquet(metadata / "ignored_regions.parquet").filter(pl.col("split") == "val")
@@ -167,8 +252,8 @@ def _previews(batch_dir: Path, dataset_root: Path, metadata: Path) -> list[dict]
         count, key = max(missed)
         if count > 0:
             choices.append((f"Missed GT in {experiment_label(reference)} at IoU 0.5", key))
-        _save(selection_path, choices)
-    directory = batch_dir / "previews"
+        _save(output_dir / "gallery_selection.json", choices)
+    directory = output_dir / "previews"
     directory.mkdir(exist_ok=True)
     records = []
     for index, (reason, key) in enumerate(choices):
@@ -200,24 +285,32 @@ def _previews(batch_dir: Path, dataset_root: Path, metadata: Path) -> list[dict]
                     "score_threshold": 0.3,
                 }
             )
-    _save(batch_dir / "preview_selection.json", records)
+    _save(output_dir / "preview_selection.json", records)
     return records
 
 
 def summarize_batch(
-    batch_dir: Path, dataset_root: Path | None = None, metadata: Path | None = None
+    batch_dir: Path,
+    dataset_root: Path | None = None,
+    metadata: Path | None = None,
+    output_dir: Path | None = None,
 ) -> dict:
     """Aggregate measured experiment outputs without executing a detector.
+
+    Read saved validation records and raw or compact training curves, then regenerate
+    comparisons and plots. A separate output directory keeps versioned inputs unchanged.
 
     Args:
         batch_dir: Batch directory containing the four experiment directories.
         dataset_root: Optional original image directory for diagnostic previews.
         metadata: Optional directory containing the three raw metadata tables.
+        output_dir: Destination for generated files, defaulting to the batch directory.
 
     Returns:
         Comparison rows, four measured contrasts, chart paths, and optional preview records.
     """
-    batch_dir.mkdir(parents=True, exist_ok=True)
+    destination = output_dir if output_dir is not None else batch_dir
+    destination.mkdir(parents=True, exist_ok=True)
     rows, histories, epoch_metrics = [], [], []
     for run in RUN_ORDER:
         directory = result_directory(batch_dir, run)
@@ -270,8 +363,13 @@ def summarize_batch(
         if "variant" in config:
             row["variant"] = descriptive_name(config["variant"])
         rows.append(row)
-        history = _read(directory / "history.json")
+        history_path = directory / "history.json"
+        history = _read(
+            history_path if history_path.exists() else directory / "history_summary.json"
+        )
         if isinstance(history, list):
+            if history_path.exists():
+                history = aggregate_training_history(history)
             histories.extend(
                 {
                     "attempt": record.get("attempt", 0),
@@ -308,7 +406,7 @@ def summarize_batch(
             "completed_pair": first["status"] == second["status"] == "Completed",
             **values,
         }
-    _save(batch_dir / "comparison.json", rows)
+    _save(destination / "comparison.json", rows)
     pl.from_dicts(
         [
             {
@@ -326,17 +424,13 @@ def summarize_batch(
             for row in rows
         ],
         infer_schema_length=None,
-    ).write_csv(batch_dir / "comparison.csv")
-    _save(batch_dir / "differences.json", differences)
-    charts = _charts(batch_dir, rows, histories)
+    ).write_csv(destination / "comparison.csv")
+    _save(destination / "differences.json", differences)
+    charts = _charts(destination, rows, histories)
     if epoch_metrics:
         values = (
             pl.from_dicts(epoch_metrics, infer_schema_length=None)
-            .with_columns(
-                pl.col("experiment_id").replace_strict(
-                    {name: experiment_label(name) for name in RUN_ORDER}
-                )
-            )
+            .with_columns(pl.col("experiment_id").replace_strict(PLOT_LABELS))
             .unpivot(
                 on=[name for name in METRICS if any(name in row for row in epoch_metrics)],
                 index=["experiment_id", "epoch"],
@@ -348,24 +442,38 @@ def summarize_batch(
             x="epoch",
             y="value",
             color="experiment_id",
+            color_discrete_map=PLOT_COLORS,
             facet_col="variable",
+            facet_col_wrap=3,
+            facet_row_spacing=0.14,
+            facet_col_spacing=0.06,
+            category_orders={"variable": list(METRICS)},
             markers=True,
-            title="Validation metrics by completed epoch",
+            title="Validation by epoch",
             labels={
-                "epoch": "Completed epoch",
+                "epoch": "Epoch",
                 "value": "AP",
                 "experiment_id": "Experiment",
                 "variable": "Metric",
             },
         )
-        path = batch_dir / "validation_curves.html"
+        _format_chart(figure, height=650)
+        figure.for_each_annotation(
+            lambda annotation: annotation.update(text=METRIC_LABELS[annotation.text.split("=")[-1]])
+        )
+        figure.update_xaxes(title_text="", dtick=1)
+        figure.update_xaxes(title_text="Epoch", row=1, col=2)
+        figure.update_yaxes(title_text="")
+        figure.update_yaxes(title_text="AP", row=1, col=1)
+        figure.update_yaxes(title_text="AP", row=2, col=1)
+        path = destination / "validation_curves.html"
         figure.write_html(path, include_plotlyjs=True)
         figure.write_json(path.with_suffix(".json"))
         charts.append(str(path))
     previews = (
-        _previews(batch_dir, dataset_root, metadata)
+        _previews(batch_dir, dataset_root, metadata, destination)
         if (dataset_root is not None and metadata is not None)
         else []
     )
-    LOGGER.info("Saved experiment comparisons in %s", batch_dir)
+    LOGGER.info("Saved experiment comparisons in %s", destination)
     return {"comparison": rows, "differences": differences, "charts": charts, "previews": previews}
