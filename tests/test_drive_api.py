@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import shutil
 from pathlib import Path
 
@@ -182,3 +183,136 @@ def test_download_keeps_old_copy_when_transport_returns_corrupt_bytes(tmp_path: 
     with pytest.raises(ValueError, match="checksum"):
         api.download("checkpoint-id", destination)
     assert destination.read_bytes() == b"previous good checkpoint"
+
+
+def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Execute the notebook's Drive setup with real checkpoint IO and a local transport."""
+    from types import SimpleNamespace
+
+    import nbformat
+    import polars as pl
+
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    api = LocalDrive(remote)
+    monkeypatch.setattr(drive_api, "DriveApi", lambda service: api)
+    notebook = nbformat.read(
+        Path(__file__).parents[1] / "experiments/02_faster_rcnn_experiments_kaggle.ipynb",
+        as_version=4,
+    )
+    source = notebook.cells[7].source.split("status_path =")[0]
+    source = source.replace("/kaggle/temp/drive_cache", str(tmp_path / "cache"))
+    frames = pl.DataFrame({"image_key": ["train/clip/0000001"]})
+    settings = {"dataset": {}}
+    config = {"experiment_id": "baseline_stride5"}
+    output = tmp_path / "output"
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    namespace: dict = {
+        "Path": Path,
+        "json": json,
+        "LOGGER": logging.getLogger(__name__),
+        "verify_selection": lambda *args: None,
+        "compute_source_identity": lambda *args: "selection-hash",
+        "build_experiment_config": lambda *args: config,
+        "find_previous_output": lambda *args: None,
+        "selected": frames,
+        "validation": frames,
+        "SETTINGS": settings,
+        "EXPERIMENT": "baseline_stride5",
+        "SOURCE_ROOT": tmp_path,
+        "STAGE": "full",
+        "IS_KAGGLE": True,
+        "KAGGLE_INPUT": inputs,
+        "BATCH_ID": "faster_rcnn_test",
+        "OUTPUT_DIRECTORY": output,
+        "drive_root": str(remote),
+        "service": SimpleNamespace(
+            about=lambda: SimpleNamespace(
+                get=lambda **kwargs: SimpleNamespace(execute=lambda **kwargs: {"storageQuota": {}})
+            )
+        ),
+    }
+    exec(compile(source, "notebook-drive-setup", "exec"), namespace)
+    assert namespace["probe_result"]["verified"]
+    assert namespace["progress"] == {}
+    _snapshot(output, 3, "baseline_stride5")
+    namespace["persist_checkpoint"](output)
+    restored = tmp_path / "restored"
+    progress = drive_api.restore_checkpoint_from_drive_api(
+        api, namespace["run_folder"], restored, config, tmp_path / "restore-cache"
+    )
+    assert progress["epochs_completed"] == 3
+    exec(compile(source, "notebook-drive-setup", "exec"), namespace)
+    assert namespace["progress"]["global_step"] == 3
+
+
+def test_faster_rcnn_notebook_bootstrap_downloads_into_a_new_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run the notebook bootstrap against simulated Google HTTP responses on an empty disk."""
+    import ast
+    import importlib
+    import logging
+    import sys
+    from io import BytesIO
+    from types import SimpleNamespace
+    from zipfile import ZipFile
+
+    import googleapiclient.discovery
+    import nbformat
+
+    contents = BytesIO()
+    required = (
+        "src/hm2/faster_rcnn.py",
+        "src/hm2/faster_rcnn_experiments.py",
+        "src/hm2/drive_api.py",
+        "config/faster_rcnn_baseline.toml",
+    )
+    with ZipFile(contents, "w") as archive:
+        for name in required:
+            archive.writestr(name, b"test source")
+    payload = contents.getvalue()
+    metadata = {
+        "name": "faster_rcnn_project.zip",
+        "id": "project",
+        "size": str(len(payload)),
+        "md5Checksum": hashlib.md5(payload).hexdigest(),
+    }
+    http = HttpMockSequence(
+        [
+            ({"status": "200"}, json.dumps({"files": [{"id": "inputs", "name": "inputs"}]})),
+            ({"status": "200"}, json.dumps({"files": [metadata]})),
+            ({"status": "200", "content-length": str(len(payload))}, payload),
+        ]
+    )
+    service = build("drive", "v3", http=http, cache_discovery=False)
+    monkeypatch.setattr(googleapiclient.discovery, "build", lambda *args, **kwargs: service)
+    token = {"refresh_token": "test", "client_id": "test", "client_secret": "test"}
+    monkeypatch.setitem(
+        sys.modules,
+        "kaggle_secrets",
+        SimpleNamespace(
+            UserSecretsClient=lambda: SimpleNamespace(get_secret=lambda name: json.dumps(token))
+        ),
+    )
+    notebook = nbformat.read(
+        Path(__file__).parents[1] / "experiments/02_faster_rcnn_experiments_kaggle.ipynb",
+        as_version=4,
+    )
+    source = notebook.cells[3].source.replace("/kaggle/temp/", str(tmp_path / "runtime") + "/")
+    bootstrap = ast.Module(body=[ast.parse(source).body[0]], type_ignores=[])
+    namespace: dict = {
+        "IS_KAGGLE": True,
+        "Path": Path,
+        "ZipFile": ZipFile,
+        "importlib": importlib,
+        "json": json,
+        "hashlib": hashlib,
+        "LOGGER": logging.getLogger(__name__),
+    }
+    exec(compile(bootstrap, "notebook-bootstrap", "exec"), namespace)
+    for name in required:
+        assert (namespace["REPOSITORY_ROOT"] / name).read_bytes() == b"test source"
