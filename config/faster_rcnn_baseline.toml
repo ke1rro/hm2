@@ -1,0 +1,36 @@
+[dataset]
+frame_stride = 5
+expected_selected_frames = 4868
+expected_selected_clips = 56
+expected_validation_frames = 2846
+should_stage_images = true
+
+[model]
+min_size = 640
+max_size = 1024
+detections_per_img = 500
+is_ignore_aware = true
+ignore_threshold = 0.5
+
+[training]
+seed = 2026
+epochs = 5
+batch_size = 2
+num_workers = 2
+learning_rate = 0.0025
+warmup_updates = 100
+flip_probability = 0.5
+checkpoint_seconds = 600
+
+[evaluation]
+batch_size = 2
+num_workers = 2
+speed_batch_size = 1
+speed_frames = 300
+
+[probe]
+updates = 40
+validation_frames = 60
+
+[export]
+should_export_test_predictions = true
