@@ -24,7 +24,7 @@ from hm2.data import load_tables
 from hm2.dense_evaluation import evaluate_detections
 from hm2.detection_data import make_loader, select_frames
 from hm2.evaluation import predictions_to_coco
-from hm2.experiment_checkpoint import load_checkpoint, save_checkpoint, write_json
+from hm2.experiment_checkpoint import load_checkpoint, publish_snapshot, save_checkpoint, write_json
 from hm2.faster_rcnn import (
     IgnoreAwareDetectionDataset,
     build_faster_rcnn,
@@ -555,10 +555,14 @@ def run_experiment(
         for handler in logger.handlers:
             handler.flush()
         if on_checkpoint is not None:
+            publish_snapshot(output)
             on_checkpoint(output)
         saved_signature = signature
         last_save = time.monotonic()
 
+    if saved_signature is not None and on_checkpoint is not None:
+        publish_snapshot(output)
+        on_checkpoint(output)
     persist()
     while progress["epochs_completed"] < training["epochs"] or progress["pending_evaluation"]:
         if progress["pending_evaluation"]:

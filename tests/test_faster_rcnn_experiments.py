@@ -1,6 +1,7 @@
 import copy
 import csv
 import json
+import shutil
 from pathlib import Path
 
 import polars as pl
@@ -166,7 +167,12 @@ def finished_run(competition: dict, tmp_path_factory: pytest.TempPathFactory) ->
     batch_directory = tmp_path_factory.mktemp("batch")
     output = batch_directory / "baseline_stride5"
 
+    from hm2.colab_drive import restore_checkpoint_from_drive, sync_checkpoint_to_drive
+
+    drive = batch_directory / "drive"
+
     def pause_after_first_validation(directory: Path) -> None:
+        sync_checkpoint_to_drive(directory, drive)
         status = json.loads((directory / "status.json").read_text())
         if status["epochs_completed"] == 1 and not status["pending_evaluation"]:
             (directory / "STOP").touch()
@@ -182,7 +188,10 @@ def finished_run(competition: dict, tmp_path_factory: pytest.TempPathFactory) ->
         "baseline_stride5",
     )
     first = run_experiment(*arguments, on_checkpoint=pause_after_first_validation)
-    (output / "STOP").unlink()
+    shutil.rmtree(output)
+    restored = restore_checkpoint_from_drive(drive, output, {})
+    assert restored["epochs_completed"] == 1
+    assert not restored["pending_evaluation"]
     final = run_experiment(*arguments)
     return {"batch_directory": batch_directory, "output": output, "first": first, "final": final}
 
