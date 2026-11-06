@@ -29,13 +29,18 @@ ANCHOR_ASPECT_RATIOS = (0.5, 1.0, 2.0)
 def ignore_coverage(boxes: Tensor, ignore_boxes: Tensor) -> Tensor:
     """Return the largest fraction of each box's area that lies inside one ignored region.
 
+    Under mixed precision torchvision produces anchors and proposals in float16, whose
+    maximum of 65504 overflows for areas above 255 by 255 pixels, so the computation is
+    always carried out in float32.
+
     Args:
         boxes: Candidate anchors or proposals as xyxy pixels with shape (N, 4).
         ignore_boxes: Ignored regions as xyxy pixels with shape (M, 4).
 
     Returns:
-        Coverage values in [0, 1] with shape (N,), zero when there are no regions.
+        Float32 coverage values in [0, 1] with shape (N,), zero when there are no regions.
     """
+    boxes = boxes.float()
     if boxes.numel() == 0 or ignore_boxes.numel() == 0:
         return boxes.new_zeros(boxes.shape[0])
     ignore_boxes = ignore_boxes.to(boxes)

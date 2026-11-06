@@ -18,6 +18,8 @@ from hm2.faster_rcnn import (
     IgnoreAwareRoIHeads,
     IgnoreAwareTransform,
     build_faster_rcnn,
+    ignore_coverage,
+    summarize_ignore_assignment,
 )
 from hm2.submission import build_submission
 
@@ -238,3 +240,27 @@ def test_submission_cap_recovers_dense_frames_lost_at_hundred_detections(tmp_pat
     recomputed = evaluate_coco_max_dets(annotation_path, noisy, [1], 100)
     for name in ("map", "ap50", "ap75", "ap_small"):
         assert recomputed[name] == pytest.approx(canonical[name])
+
+
+def test_ignore_coverage_is_exact_for_half_precision_boxes() -> None:
+    """Catch float16 area overflow that would exclude partly covered large anchors."""
+    boxes = torch.tensor([[0.0, 0.0, 600.0, 600.0], [0.0, 0.0, 360.0, 300.0]]).half()
+    regions = torch.tensor([[0.0, 0.0, 300.0, 300.0]]).half()
+    coverage = ignore_coverage(boxes, regions)
+    assert coverage.dtype == torch.float32
+    assert coverage.tolist() == pytest.approx([0.25, 90000 / 108000])
+
+
+def test_ignore_assignment_keeps_positives_under_reduced_precision_autocast() -> None:
+    """Catch dtype problems in anchor and proposal handling when autocast shrinks tensors."""
+    model = build_faster_rcnn(pretrained=False, min_size=128, max_size=160)
+    target = {
+        "boxes": torch.tensor([[10.0, 70.0, 60.0, 110.0], [80.0, 80.0, 140.0, 115.0]]),
+        "labels": torch.tensor([3, 3]),
+        "ignore_boxes": torch.tensor([[0.0, 0.0, 160.0, 60.0]]),
+    }
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        summary = summarize_ignore_assignment(model, torch.rand(3, 120, 160), target)
+    assert summary["anchor_negatives_excluded"] > 0
+    assert summary["anchor_positives_aware"] == summary["anchor_positives_stock"]
+    assert summary["proposal_positives_aware"] == summary["proposal_positives_stock"]
