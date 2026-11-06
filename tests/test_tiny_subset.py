@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from hm2.smoke_subset import check_flight_separation, load_smoke_tables, prepare_smoke_subset
+from hm2.tiny_subset import check_flight_separation, load_tiny_tables, prepare_tiny_subset
 
 
 def _write_source(root: Path) -> None:
@@ -78,8 +78,8 @@ def test_subset_copies_only_selected_frames_and_keeps_original_crowds(tmp_path: 
         "val": {"uav0000002_00000_v": [1]},
         "test": {"clip_001": [1]},
     }
-    root = prepare_smoke_subset(source, tmp_path / "subset", selection)
-    frames, objects, ignored = load_smoke_tables(root)
+    root = prepare_tiny_subset(source, tmp_path / "subset", selection)
+    frames, objects, ignored = load_tiny_tables(root)
     assert frames["split"].to_list() == ["train", "val", "test"]
     assert frames.filter(frames["split"] == "test")["submission_id"].to_list() == [
         "clip_001_0000001"
@@ -95,6 +95,6 @@ def test_subset_copies_only_selected_frames_and_keeps_original_crowds(tmp_path: 
     assert [image["id"] for image in coco["images"]] == [5]
     assert sum(item["iscrowd"] for item in coco["annotations"]) == 8
     assert not (root / "val/images/uav0000002_00000_v/0000002.jpg").exists()
-    assert prepare_smoke_subset(source, tmp_path / "subset", selection) == root
+    assert prepare_tiny_subset(source, tmp_path / "subset", selection) == root
     with pytest.raises(ValueError):
-        prepare_smoke_subset(source, tmp_path / "subset", {**selection, "test": {"clip_001": [2]}})
+        prepare_tiny_subset(source, tmp_path / "subset", {**selection, "test": {"clip_001": [2]}})

@@ -8,9 +8,9 @@ LOGGER = logging.getLogger(__name__)
 
 
 def main() -> None:
-    """Copy the configured smoke-test frames from the competition data without extraction."""
+    """Copy the configured tiny-mode frames from the competition data without extraction."""
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-    from hm2.smoke_subset import prepare_smoke_subset
+    from hm2.tiny_subset import prepare_tiny_subset
 
     logging.basicConfig(
         level=logging.INFO,
@@ -25,11 +25,11 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "config/faster_rcnn_smoke.toml",
+        default=Path(__file__).resolve().parents[1] / "config/faster_rcnn_tiny.toml",
     )
     arguments = parser.parse_args()
     settings = tomllib.loads(arguments.config.read_text())["dataset"]
-    root = prepare_smoke_subset(
+    root = prepare_tiny_subset(
         arguments.source,
         arguments.destination,
         {split: settings[f"{split}_frames"] for split in ("train", "val", "test")},

@@ -258,7 +258,7 @@ def _test_frames(
     return frames, rows
 
 
-def prepare_smoke_subset(
+def prepare_tiny_subset(
     source: Path, destination: Path, selection: dict[str, dict[str, list[int]]]
 ) -> Path:
     """Copy a few selected frames and build small annotation tables without extraction.
@@ -318,11 +318,11 @@ def prepare_smoke_subset(
     return destination
 
 
-def load_smoke_tables(root: Path) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+def load_tiny_tables(root: Path) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Read the frame, target-object and ignored-region tables of a prepared subset.
 
     Args:
-        root: Directory returned by prepare_smoke_subset.
+        root: Directory returned by prepare_tiny_subset.
 
     Returns:
         Frames, objects and ignored regions in original-image pixels.
