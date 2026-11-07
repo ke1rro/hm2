@@ -1,4 +1,4 @@
-# RetinaNet submission CSVs
+# Submission CSVs
 
 We export one CSV for each completed experiment, selecting its checkpoint by the
 highest full-validation COCO mAP:
@@ -43,3 +43,19 @@ against `test_images.csv` and the supplied competition format; the API returns
 404 for the official sample. `official_sample_verified` records that distinction.
 
 The CSVs are generated deliverables. No Kaggle submission is made automatically.
+
+## Faster R-CNN
+
+`faster_rcnn_baseline_stride5.csv` contains the completed ignore-aware baseline's
+final-epoch predictions. We restored the original Kaggle export from its
+[verified Drive summary generation](https://drive.google.com/drive/folders/11-kfw9cFvQkfI4KdmAfDTGWmLy0Ha-hj)
+and checked its SHA256 against `CURRENT.json`. The file covers all 3,811 test
+images in `test_images.csv` order, with 287,745 detections and at most 142 per image.
+We validated class IDs, scores and pixel-coordinate bounds. The official sample
+was unavailable locally, so `official_sample_verified` remains false.
+
+The checkpoint is epoch 5, selected as the configured final epoch. Training used
+4,868 frames, every fifth frame within each clip. The
+[results notebook](../notebooks/04_faster_rcnn_results.ipynb) reads the downloaded
+records under `runs/faster_rcnn/faster_rcnn_stride5_5epochs_seed2026/`. These records,
+weights and CSVs are gitignored; original records remain on Drive.

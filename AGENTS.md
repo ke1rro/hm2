@@ -233,7 +233,7 @@ Report failures rather than weakening checks to make them pass.
 09. Inspect notebook code and metadata for hardware, data, dependency, side effect, and runtime requirements before execution. Prefer an existing configured remote kernel with the required environment when available. Use a local kernel only for verified lightweight CPU notebooks.
 10. Do not automatically rerun notebooks requiring a GPU, model training or fine-tuning, or other expensive computation, locally or remotely. Such runs require explicit user authorization and suitable compute.
 11. When execution is appropriate, restart the selected kernel and run all cells in order. If suitable compute is unavailable, requirements are unclear, or a run is not authorized, validate notebook schema and code syntax without executing cells. Preserve saved outputs when skipping execution and report that execution was not run, why it was skipped, and which outputs may be stale. Follow `notebooks/README.md` for naming and output conventions, if present.
-12. Prefer numbered notebooks such as `00_data.ipynb`, `01_eda.ipynb`, detector-family experiments, and final inference/submission. Adapt names to the repository instead of enforcing a rigid notebook count.
+12. Prefer numbered notebooks such as `00_data.ipynb`, `01_eda.ipynb`, detector-family experiments, and final inference/submission. Adapt names to the repository instead of enforcing a rigid notebook count. Keep numbered files in logical dependency and presentation order, with consecutive prefixes within each directory. Number `notebooks/` and `experiments/` independently. After adding, moving or deleting a numbered file, check the complete sequence and update affected filenames, links and references together. Do not leave gaps from removed notebooks or rename historical experiment IDs and checkpoint directories to match notebook numbering.
 13. Keep notebook outputs concise and useful for review. Avoid huge logs, embedded datasets, and unnecessary checkpoint outputs. Make major results understandable without executing expensive training.
 14. Write the notebook as a student research narrative in first-person plural: use **We**, never **I**. Follow the concise structure of `00_data.ipynb` and `01_eda.ipynb`: question, assumptions, visible configuration, execution, measured results, and limitations. Keep the experiment matrix and scientific choices visible even when implementation is imported from `src/`.
 15. Keep AI working notes, agent handoffs, internal task prompts, permission history, and development-status reports out of notebooks. Do not mention AI artifacts or `.artifacts/` in notebook prose, code, metadata, or outputs. Put platform operation instructions here, and keep only concise reproducibility notes in research notebooks. Do not invent student conclusions or replace the student-authored final report.
@@ -247,6 +247,11 @@ Use the existing native notebooks as working examples:
 `notebooks/03_retinanet_results.ipynb`. These execution notebooks use the
 same experiment identities and durable Drive layout, so either platform can resume
 compatible saved work.
+
+For Faster R-CNN, use `experiments/02_faster_rcnn_experiments_kaggle.ipynb` and
+`src/hm2/faster_rcnn_experiments.py`. Its research results belong in
+`notebooks/04_faster_rcnn_results.ipynb`. Reuse the existing Drive transport and
+checkpoint utilities rather than introducing another training loop.
 
 ### Shared Python modules
 
@@ -290,6 +295,10 @@ compatible saved work.
 5. When changing shared modules, update and verify the project bundle and its
    notebook consumers together for the next launch. Do not overwrite a running
    runtime's source tree, replace its checkpoint files, or restart it for cleanup.
+6. Create every destination's parent directory before opening a download, temporary
+   file or archive. For example, call
+   `archive_path.parent.mkdir(parents=True, exist_ok=True)` before opening its
+   `.incoming` file. A fresh Kaggle runtime may not have `/kaggle/temp` at all.
 
 ### Colab launch
 
@@ -333,8 +342,10 @@ compatible saved work.
    Kaggle's `UserSecretsClient` and authenticates the Drive API. Access tokens
    refresh automatically; External Testing refresh tokens can expire after seven
    days, requiring the local authorization command again.
-5. Fetch and verify code, data and checkpoints directly from the existing Drive
-   folder. Check write permission and available quota, then perform a real small
+5. Fetch and verify the inputs required by the selected entry notebook: RetinaNet
+   reads code and data archives from Drive; Faster R-CNN reads code from Drive and
+   competition data from attached Kaggle inputs. Restore checkpoints from Drive.
+   Check write permission and available quota, then perform a real small
    checkpoint upload/download/restore probe before expensive training. Do not use
    `google.colab.drive.mount()` on Kaggle or assume `/kaggle/working` is durable.
 6. Execute setup, inspect restored progress, then start the explicit training cell.
@@ -346,6 +357,69 @@ compatible saved work.
    rerun setup and training with the same batch ID and recipe. Completed runs skip
    and interrupted runs resume automatically from the last verified durable state.
 
+### Required pipeline for every future experiment
+
+01. Keep the operational pipeline the same for every detector family. Reuse the
+    established bootstrap, data staging, preflight checks, training callbacks,
+    Drive synchronization, resume and result export. Change only the model-specific
+    training/evaluation code and explicit scientific configuration. Do not create
+    another setup, checkpoint transport or experiment-management framework per model.
+02. Use the established Drive-first input workflow. Download the verified code bundle
+    from `My Drive/hm2_retinanet/inputs/` through `HM2_DRIVE_TOKEN` on Kaggle or the
+    native Drive mount on Colab. Reuse the existing dataset archive and prepared
+    metadata where compatible. Do not introduce manual code/dataset attachments as
+    an unstated prerequisite. If an existing experiment requires attached competition
+    data, declare that requirement before launch and verify those inputs explicitly.
+    Changing the data source must preserve frame identifiers, annotations and splits.
+03. Build a small gitignored code ZIP with `src/hm2/` and `config/` at the root, plus
+    prepared metadata only when the consumer requires it. Exclude secrets, weights,
+    caches and datasets. Verify ZIP integrity, imported-module coverage and byte-for-byte
+    agreement with current source files. Updating the ZIP does not update notebook
+    cells already uploaded to Kaggle. State which notebook and bundle must be replaced;
+    do not request another archive upload for a notebook-only fix.
+04. Make setup work in an empty runtime. Create parent directories before opening
+    downloads or temporary files; do not assume `/kaggle/temp` exists. Verify GPU,
+    compatible dependencies, credentials, write permission, disk and Drive quota.
+    Read real image/target pairs and verify expected selection and validation counts.
+    Check test images and their row metadata when export is configured; a train/val
+    archive does not establish test-data availability. Inspect actual paths before
+    diagnosing missing inputs versus unsupported directory layouts.
+05. Show effective configuration, data selection, stage, batch ID and output paths
+    before training. Environment overrides must be visible. A stage named `full`
+    means the complete configured experiment, not necessarily all training frames.
+    Explain whether Run All starts training. Preserve existing seeds, scientific
+    settings and run identities during operational fixes.
+06. Use the shared save/download/verify/restore probe before expensive training.
+    Inspect helper return contracts instead of assuming result keys, even in logging.
+    `verify_drive_api_checkpoint` returns `verified`, `step` and `file_id`, not
+    `sha256`; the mounted-Drive probe has a different contract. Reuse the established
+    calls and log documented fields or the full probe result.
+07. Use the same persistence contract everywhere: save complete training state locally
+    and atomically, publish a finished snapshot, verify its durable Drive copy, then
+    advance `CURRENT.json`. Save periodically, at epoch boundaries, after validation
+    and on completion. Stop on persistence failure. Resume compatible state including
+    pending validation and skip completed work. Follow the recovery rules below.
+08. Test the actual setup cells against an empty temporary filesystem and simulated
+    API responses, including download, extraction, storage probe, snapshot publication
+    and restart restoration. Reuse focused regressions in `tests/test_drive_api.py`.
+    Schema, syntax and type checks alone do not verify a working hosted setup.
+    Report simulated, real API and GPU verification separately; never launch full
+    training merely to validate bootstrap or formatting.
+09. Keep durable outputs together under
+    `My Drive/hm2_retinanet/batches/<batch_id>/<experiment>/`, with local outputs under
+    `runs/<experiment_group>/<batch_id>/<experiment>/`. Persist configuration, selection
+    manifests, environment, training history, metrics, per-class AP and logs alongside
+    checkpoints. Synchronize configured summaries, plots and submission CSVs after
+    completion. A teammate uses their own authorized token and Editor access to the
+    same Drive folder; credentials stay in Kaggle Secrets, never in notebooks or Git.
+10. Confirm completion from saved status, finished final validation and verified final
+    checkpoint/result snapshots, including configured exports. Epoch count alone is
+    insufficient. Resolve the verified generation through `CURRENT.json`, not folder
+    timestamps. Report training time separately from total elapsed time. Conversion
+    warnings after a successful run are not evidence of failed training. Distinguish
+    conclusions from supplied logs from independently inspected Drive files, and never
+    invent metrics or restart a completed run to check its status.
+
 ### Automatic checkpoints and recovery
 
 1. Save the complete state: model, optimizer, scheduler, AMP scaler, exact config,
@@ -355,8 +429,10 @@ compatible saved work.
    randomly initialized model can have a different frozen-backbone policy.
 2. Save locally first using atomic replacement, then publish an immutable snapshot.
    Checkpoint approximately every 10–15 minutes, at epoch boundaries, after
-   validation and on completion. Keep per-experiment `latest.pt` and `best.pt`;
-   document the best-model criterion, currently highest full-validation COCO mAP.
+   validation and on completion. Preserve each experiment's selection protocol:
+   RetinaNet keeps `latest.pt` and `best.pt` by highest full-validation COCO mAP;
+   the current Faster R-CNN baseline reports the final epoch from `latest.pt` and
+   does not select an epoch on validation. Do not add best-epoch selection to it.
 3. Synchronize completed files synchronously to Drive. Verify destination hashes,
    write `manifest.json` last in its generation, and publish `CURRENT.json` only
    after verification. Retain the preceding good generation until replacement is
