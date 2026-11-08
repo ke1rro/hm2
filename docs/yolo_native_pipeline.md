@@ -220,7 +220,10 @@ is evaluated again in the same session. Three inference settings are then evalua
 best checkpoint without retraining: a 1536-pixel input, test-time augmentation and a
 confidence threshold of 0.05.
 
-To run it on Kaggle, follow Section 6 with notebook 11 instead of notebook 10. Set
+To run it on Kaggle, follow Section 6 with notebook 11 instead of notebook 10. Select
+**GPU T4 x2**. On a single GPU the notebook trains on device 0 with batch 8. That keeps
+8 images per GPU, and Ultralytics accumulates gradients to the same nominal batch of 64,
+but training takes about twice as long: at most about 6.6 h. Set
 `SHOULD_TRAIN = True` and start **Save & Run All**. Training takes at most about 3.5 h,
 plus about one hour for data preparation, evaluation and export. Each experiment writes
 `/kaggle/working/submissions/yolo11s_<experiment>.csv` with a metadata file that holds its
