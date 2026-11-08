@@ -55,6 +55,8 @@ PASSTHROUGH_TRAINING_KEYS = (
     "hsv_s",
     "hsv_v",
 )
+OPTIONAL_TRAINING_KEYS = ("freeze", "box", "cls", "dfl")
+OPTIONAL_INFERENCE_KEYS = ("augment",)
 
 
 class Detector(Protocol):
@@ -71,6 +73,7 @@ class Detector(Protocol):
         half: bool,
         device: int | str,
         verbose: bool,
+        augment: bool,
     ) -> list:
         """Return one result with boxes.xyxy, boxes.conf and boxes.cls per input image."""
         ...
@@ -128,7 +131,35 @@ def training_arguments(
         "save": True,
         "plots": True,
         **{key: training[key] for key in PASSTHROUGH_TRAINING_KEYS},
+        **{key: training[key] for key in OPTIONAL_TRAINING_KEYS if key in training},
     }
+
+
+def apply_experiment(settings: dict, overrides: dict) -> dict:
+    """Return pipeline settings with one experiment's table values replaced.
+
+    Only existing keys of the dataset, training and inference tables may change, plus the
+    optional Ultralytics training keys freeze, box, cls and dfl and the inference key
+    augment, so a misspelled override fails instead of being ignored.
+
+    Args:
+        settings: Base pipeline configuration tables.
+        overrides: Experiment tables keyed by dataset, training or inference.
+
+    Returns:
+        A new configuration with the overridden values.
+    """
+    merged = {table: dict(values) for table, values in settings.items()}
+    for table, values in overrides.items():
+        if table == "description":
+            continue
+        optional = {"training": OPTIONAL_TRAINING_KEYS, "inference": OPTIONAL_INFERENCE_KEYS}
+        allowed = set(settings[table]) | set(optional.get(table, ()))
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(f"Unknown {table} settings: {sorted(unknown)}")
+        merged[table].update(values)
+    return merged
 
 
 def plan_epochs(
@@ -196,7 +227,7 @@ def predict_frames(
         image_root: Directory against which relative_path is resolved.
         image_size: Longer side of the network input in pixels.
         inference_settings: The inference table with confidence, iou, max_detections,
-            batch and half.
+            batch, half and optionally augment for Ultralytics test-time augmentation.
         device: CUDA device index or "cpu".
         loader_threads: Threads used to decode and resize frames.
 
@@ -232,6 +263,7 @@ def predict_frames(
                 half=inference_settings["half"],
                 device=device,
                 verbose=False,
+                augment=inference_settings.get("augment", False),
             )
             for row, image, output in zip(
                 batch.iter_rows(named=True), images, outputs, strict=True
@@ -617,3 +649,80 @@ def write_coco_subset(source_root: Path, frames: pl.DataFrame, destination: Path
         )
     )
     return [new_ids[key] for key in keys]
+
+
+def evaluate_checkpoints(
+    checkpoints: dict[str, Path],
+    frames: pl.DataFrame,
+    image_ids: list[int],
+    annotation_path: Path,
+    image_root: Path,
+    image_size: int,
+    inference_settings: dict,
+    device: int | str,
+) -> tuple[list[dict], dict[str, list[dict[str, np.ndarray]]]]:
+    """Predict and evaluate several checkpoints on the same frames with one protocol.
+
+    Args:
+        checkpoints: Checkpoint paths keyed by candidate name.
+        frames: Evaluated frame metadata with relative_path, image_width and image_height.
+        image_ids: COCO image identifiers aligned with frames.
+        annotation_path: COCO file with the ground truth of the frames.
+        image_root: Directory against which relative_path is resolved.
+        image_size: Longer side of the network input in pixels.
+        inference_settings: The inference table passed to predict_frames.
+        device: CUDA device index or "cpu".
+
+    Returns:
+        One metric row per candidate and the predictions keyed by candidate name.
+    """
+    from ultralytics import YOLO
+
+    rows, predictions = [], {}
+    for name, path in checkpoints.items():
+        started = time.monotonic()
+        predictions[name] = predict_frames(
+            YOLO(str(path)), frames, image_root, image_size, inference_settings, device
+        )
+        seconds = time.monotonic() - started
+        metrics = evaluate_predictions(
+            annotation_path, coco_detections(predictions[name], image_ids), image_ids
+        )
+        rows.append(
+            {
+                "candidate": name,
+                "map_100": metrics["max_dets_100"]["map"],
+                "map_500": metrics["max_dets_500"]["map"],
+                "ap50": metrics["max_dets_100"]["ap50"],
+                "ap75": metrics["max_dets_100"]["ap75"],
+                "ap_small": metrics["max_dets_100"]["ap_small"],
+                "ap_medium": metrics["max_dets_100"]["ap_medium"],
+                "ap_large": metrics["max_dets_100"]["ap_large"],
+                "per_class_ap": metrics["max_dets_100"]["per_class_ap"],
+                "milliseconds_per_frame": 1000 * seconds / frames.height,
+            }
+        )
+    return rows, predictions
+
+
+def restore_run_from_mirror(mirror_directory: Path, run_directory: Path) -> int | None:
+    """Copy a restored checkpoint mirror into a native run directory and read its epoch.
+
+    Args:
+        mirror_directory: Flat directory with last.pt, best.pt and results.csv from Drive.
+        run_directory: Native Ultralytics run directory to populate when it has no last.pt.
+
+    Returns:
+        The epoch stored in last.pt, -1 for a finished run, or None when nothing exists.
+    """
+    last = run_directory / "weights" / "last.pt"
+    if not last.is_file() and (mirror_directory / "last.pt").is_file():
+        (run_directory / "weights").mkdir(parents=True, exist_ok=True)
+        for name in ("last.pt", "best.pt"):
+            if (mirror_directory / name).is_file():
+                shutil.copy2(mirror_directory / name, run_directory / "weights" / name)
+        if (mirror_directory / "results.csv").is_file():
+            shutil.copy2(mirror_directory / "results.csv", run_directory / "results.csv")
+    if not last.is_file():
+        return None
+    return torch.load(last, map_location="cpu", weights_only=False)["epoch"]

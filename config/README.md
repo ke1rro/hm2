@@ -83,3 +83,12 @@ tables, read by `hm2.yolo_pipeline.load_pipeline_settings`:
 There are no hidden defaults. Changing `device`, `batch` or `image_size` changes the
 experiment. The design and run instructions are in
 [docs/yolo_native_pipeline.md](../docs/yolo_native_pipeline.md).
+
+`yolo11s_native_experiments.toml` defines the tuning runs of
+[notebook 11](../notebooks/11_yolo11s_tuning_experiments.ipynb). `base_config` names the
+recipe above and `baseline_checkpoint` the submitted checkpoint shipped in the bundle.
+Each `[experiments.<name>]` and `[inference_experiments.<name>]` table has a
+`description` and overrides for the `dataset`, `training` or `inference` tables.
+`hm2.yolo_pipeline.apply_experiment` rejects unknown keys. The only keys allowed beyond
+the base recipe are the Ultralytics arguments `freeze`, `box`, `cls` and `dfl` in
+training and `augment` in inference.

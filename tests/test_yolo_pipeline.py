@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +22,7 @@ from hm2.yolo_data import (
 from hm2.yolo_pipeline import (
     PASSTHROUGH_TRAINING_KEYS,
     CheckpointMirror,
+    apply_experiment,
     build_yolo_submission,
     classify_ground_truth_outcomes,
     coco_detections,
@@ -28,6 +30,7 @@ from hm2.yolo_pipeline import (
     plan_epochs,
     predict_frames,
     remap_detection_head,
+    restore_run_from_mirror,
     training_arguments,
     write_coco_subset,
 )
@@ -300,6 +303,58 @@ def test_training_arguments_pass_every_recipe_value() -> None:
     assert arguments["epochs"] == 40
     assert arguments["exist_ok"] is True
     assert all(arguments[key] == settings["training"][key] for key in PASSTHROUGH_TRAINING_KEYS)
+
+
+def test_training_arguments_pass_optional_keys_only_when_configured() -> None:
+    settings = _settings()
+    assert "freeze" not in training_arguments(settings, Path("d.yaml"), Path("r"), "run", 1)
+    tuned = apply_experiment(settings, {"training": {"freeze": 10, "cls": 1.0}})
+    arguments = training_arguments(tuned, Path("d.yaml"), Path("r"), "run", 1)
+    assert (arguments["freeze"], arguments["cls"]) == (10, 1.0)
+
+
+def test_experiment_overrides_copy_settings_and_reject_unknown_keys() -> None:
+    settings = _settings()
+    tuned = apply_experiment(
+        settings,
+        {"description": "text", "training": {"lr0": 0.0005}, "inference": {"augment": True}},
+    )
+    assert tuned["training"]["lr0"] == 0.0005
+    assert tuned["inference"]["augment"] is True
+    assert settings["training"]["lr0"] != 0.0005
+    assert "augment" not in settings["inference"]
+    with pytest.raises(ValueError, match="Unknown training settings"):
+        apply_experiment(settings, {"training": {"learning_rate": 0.1}})
+
+
+def test_each_tuning_experiment_changes_one_recipe_factor() -> None:
+    plan = tomllib.loads((ROOT / "config/yolo11s_native_experiments.toml").read_text())
+    base = load_pipeline_settings(ROOT / "config" / plan["base_config"])
+    schedule = {"max_epochs", "patience", "expected_train_frames"}
+    for group in ("experiments", "inference_experiments"):
+        for name, overrides in plan[group].items():
+            tuned = apply_experiment(base, overrides)
+            changed = {
+                key
+                for table in tuned
+                for key, value in tuned[table].items()
+                if key not in schedule and base[table].get(key) != value
+            }
+            assert len(changed) == 1, (name, changed)
+
+
+def test_mirror_restore_populates_run_and_reads_epoch(tmp_path: Path) -> None:
+    mirror, run = tmp_path / "mirror", tmp_path / "run"
+    assert restore_run_from_mirror(mirror, run) is None
+    mirror.mkdir()
+    torch.save({"epoch": 3}, mirror / "last.pt")
+    torch.save({"epoch": 1}, mirror / "best.pt")
+    (mirror / "results.csv").write_text("epoch\n1\n")
+    assert restore_run_from_mirror(mirror, run) == 3
+    assert (run / "weights" / "best.pt").is_file()
+    assert (run / "results.csv").read_text() == "epoch\n1\n"
+    torch.save({"epoch": -1}, mirror / "last.pt")
+    assert restore_run_from_mirror(mirror, run) == 3
 
 
 def test_ground_truth_outcomes_separate_error_types() -> None:
