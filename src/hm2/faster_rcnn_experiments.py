@@ -53,6 +53,11 @@ RECORDED_MODULES = (
 )
 TABLE_NAMES = ("frames", "objects", "ignored_regions")
 LOSS_COLUMNS = ("loss", "loss_objectness", "loss_rpn_box_reg", "loss_classifier", "loss_box_reg")
+TrainingStateBuilder = Callable[
+    [dict, int, torch.device],
+    tuple[torch.nn.Module, Optimizer, LRScheduler, torch.amp.GradScaler],
+]
+StepDescriber = Callable[[torch.nn.Module, Optimizer], dict]
 EMPTY_OBJECT_SCHEMA = {
     "image_key": pl.String,
     "x": pl.Float64,
@@ -255,8 +260,11 @@ def stage_images(source_root: Path, destination_root: Path, relative_paths: list
     }
 
 
-def hash_sources() -> dict[str, str]:
+def hash_sources(modules: tuple[str, ...] = RECORDED_MODULES) -> dict[str, str]:
     """Hash every source file that shapes a run, as a stand-in for a commit identifier.
+
+    Args:
+        modules: Importable module names to hash, by default the Faster R-CNN run modules.
 
     Returns:
         SHA256 digests keyed by module name, covering the shared RetinaNet modules too.
@@ -265,7 +273,7 @@ def hash_sources() -> dict[str, str]:
         name: hashlib.sha256(
             Path(inspect.getfile(importlib.import_module(name))).read_bytes()
         ).hexdigest()
-        for name in RECORDED_MODULES
+        for name in modules
     }
 
 
@@ -349,11 +357,12 @@ def summarize_model(model: torch.nn.Module) -> dict:
     }
 
 
-def describe_environment(device: torch.device) -> dict:
+def describe_environment(device: torch.device, modules: tuple[str, ...] = RECORDED_MODULES) -> dict:
     """Record software, hardware and source hashes for one execution.
 
     Args:
         device: Device that trains the model.
+        modules: Importable module names whose source files are hashed.
 
     Returns:
         A JSON-compatible description of the runtime.
@@ -365,7 +374,7 @@ def describe_environment(device: torch.device) -> dict:
         "cuda": torch.version.cuda,
         "device": str(device),
         "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
-        "source_sha256": hash_sources(),
+        "source_sha256": hash_sources(modules),
         "reproducibility": "Fixed epoch order and frame flips; CUDA may be nondeterministic.",
     }
 
@@ -445,6 +454,38 @@ def _build_training_state(
     return model, optimizer, scheduler, torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
 
 
+def resolve_training_recipe(
+    settings: dict,
+    experiment_name: str,
+    selected_keys: list[str],
+    source_identity: str,
+    experiment_config: dict | None = None,
+    build_training_state: TrainingStateBuilder | None = None,
+) -> tuple[dict, TrainingStateBuilder]:
+    """Choose the recorded recipe and the training-state builder of one run.
+
+    Without overrides this returns the Faster R-CNN configuration and builder, so the
+    baseline runs exactly as before. Another detector family passes its own pair.
+
+    Args:
+        settings: The complete experiment configuration.
+        experiment_name: Descriptive experiment name.
+        selected_keys: Ordered image keys of the training selection.
+        source_identity: Digest from compute_source_identity.
+        experiment_config: Optional recipe that a checkpoint must match.
+        build_training_state: Optional builder of model, optimizer, schedule and scaler.
+
+    Returns:
+        The recipe and the builder that run_experiment uses.
+    """
+    config = (
+        experiment_config
+        if experiment_config is not None
+        else build_experiment_config(settings, experiment_name, selected_keys, source_identity)
+    )
+    return config, build_training_state or _build_training_state
+
+
 def run_experiment(
     image_root: Path,
     source_root: Path,
@@ -457,6 +498,10 @@ def run_experiment(
     resume: bool = True,
     seconds: float | None = None,
     on_checkpoint: Callable[[Path], None] | None = None,
+    experiment_config: dict | None = None,
+    build_training_state: TrainingStateBuilder | None = None,
+    describe_step: StepDescriber | None = None,
+    recorded_modules: tuple[str, ...] = RECORDED_MODULES,
 ) -> dict:
     """Train for the configured epochs, validate after each one and keep resumable records.
 
@@ -466,6 +511,8 @@ def run_experiment(
     chosen on validation, and per-epoch validation is recorded only as information. A rerun
     restores latest.pt, rejects a changed recipe, skips finished epochs, and finishes
     pending validation. Creating a STOP file in the output directory pauses the run.
+    The default arguments run the Faster R-CNN recipe; another detector family supplies
+    its own recipe, training-state builder, per-step diagnostics and hashed modules.
 
     Args:
         image_root: Directory that holds the images, local or staged.
@@ -479,6 +526,10 @@ def run_experiment(
         resume: Whether an existing checkpoint may be restored.
         seconds: Optional training time budget for this call.
         on_checkpoint: Optional hook called with the output directory after each checkpoint.
+        experiment_config: Optional recipe that replaces the Faster R-CNN configuration.
+        build_training_state: Optional builder that replaces the Faster R-CNN builder.
+        describe_step: Optional callback whose values are added to every history row.
+        recorded_modules: Module names whose source hashes are recorded in environment.json.
 
     Returns:
         The run status, including whether every epoch and its validation are complete.
@@ -488,15 +539,17 @@ def run_experiment(
     training, evaluation = settings["training"], settings["evaluation"]
     selected, validation = select_experiment_frames(frames, settings["dataset"])
     selected_keys = selected["image_key"].to_list()
-    config = build_experiment_config(
+    config, build_state = resolve_training_recipe(
         settings,
         experiment_name,
         selected_keys,
         compute_source_identity(source_root, selected_keys),
+        experiment_config,
+        build_training_state,
     )
     device = _select_device()
     batches = math.ceil(selected.height / training["batch_size"])
-    model, optimizer, scheduler, scaler = _build_training_state(settings, batches, device)
+    model, optimizer, scheduler, scaler = build_state(settings, batches, device)
     progress = _new_progress()
     latest = output / "latest.pt"
     saved_signature = None
@@ -507,7 +560,7 @@ def run_experiment(
             "extra_state"
         ]
         saved_signature = _progress_signature(progress)
-    environment = describe_environment(device)
+    environment = describe_environment(device, recorded_modules)
     write_json(output / "config.json", config)
     write_json(output / "model.json", summarize_model(model))
     write_json(output / "environment.json", environment)
@@ -619,8 +672,9 @@ def run_experiment(
         )
 
         def on_step(row: dict) -> bool:
+            details = describe_step(model, optimizer) if describe_step is not None else {}
             progress["history"].append(
-                {**row, "epoch": epoch + 1, "attempt": len(progress["history"]) + 1}
+                {**row, **details, "epoch": epoch + 1, "attempt": len(progress["history"]) + 1}
             )
             progress["batch_cursor"] += 1
             progress["global_step"] = row["step"]
@@ -927,19 +981,22 @@ def export_test_submission(
     return record
 
 
-def find_previous_output(input_root: Path, batch_id: str, experiment_name: str) -> Path | None:
+def find_previous_output(
+    input_root: Path, batch_id: str, experiment_name: str, family: str = "faster_rcnn"
+) -> Path | None:
     """Find the experiment directory of a previous notebook version attached as input.
 
     Args:
         input_root: The read-only input directory of the hosted notebook.
         batch_id: Batch identifier of the run.
         experiment_name: Descriptive experiment name.
+        family: Detector family directory under runs, such as faster_rcnn or rt_detr.
 
     Returns:
         The attached directory that holds latest.pt, or None when nothing is attached.
     """
     for child in sorted(input_root.iterdir()):
-        candidate = child / "runs/faster_rcnn" / batch_id / experiment_name
+        candidate = child / "runs" / family / batch_id / experiment_name
         if (candidate / "latest.pt").is_file():
             return candidate
     return None
@@ -1036,15 +1093,18 @@ def load_batch_records(batch_directory: Path) -> dict:
     }
 
 
-def aggregate_loss_curve(history: list[dict], window_size: int = 100) -> pl.DataFrame:
-    """Average the four Faster R-CNN losses and their sum in windows inside each epoch.
+def aggregate_loss_curve(
+    history: list[dict], window_size: int = 100, columns: tuple[str, ...] = LOSS_COLUMNS
+) -> pl.DataFrame:
+    """Average the training losses and their sum in windows inside each epoch.
 
     Args:
         history: Step records from history.json, with epoch, attempt, step and the losses.
         window_size: Maximum consecutive batch attempts represented by one curve point.
+        columns: Numeric history columns to average, by default the Faster R-CNN losses.
 
     Returns:
-        One row per window with the last update number and the mean of every loss.
+        One row per window with the last update number and the mean of every column.
     """
     return (
         pl.from_dicts(history, infer_schema_length=None)
@@ -1053,7 +1113,7 @@ def aggregate_loss_curve(history: list[dict], window_size: int = 100) -> pl.Data
         .agg(
             pl.col("step").last(),
             pl.len().alias("batches"),
-            *[pl.col(name).mean() for name in LOSS_COLUMNS],
+            *[pl.col(name).mean() for name in columns],
         )
         .drop("window")
     )

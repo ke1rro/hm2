@@ -1,0 +1,85 @@
+# RT-DETRv2 recipe for experiments/03_rt_detr_experiments_kaggle.ipynb.
+# The shared tables define the baseline. Each [experiments.<name>] table may only replace
+# keys that already exist in a shared table; experiments run in the order listed here.
+# Dataset, resize, seed, flips, epochs, batch size, validation and export match the
+# Faster R-CNN B1 run (config/faster_rcnn_baseline.toml).
+
+[dataset]
+frame_stride = 5
+expected_selected_frames = 4868
+expected_selected_clips = 56
+expected_validation_frames = 2846
+should_stage_images = true
+
+[model]
+model_id = "PekingU/rtdetr_v2_r50vd"
+model_revision = "main"
+min_size = 640
+max_size = 1024
+size_divisor = 32
+num_queries = 300
+num_denoising = 100
+label_noise_ratio = 0.5
+box_noise_scale = 1.0
+detections_per_img = 500
+is_ignore_aware = true
+ignore_threshold = 0.5
+
+# Varifocal classification, L1 and box losses with the RT-DETR weights. box_loss is
+# "giou" or "nwd"; nwd_constant is in model pixels, close to the typical object size.
+[loss]
+class_weight = 1.0
+l1_weight = 5.0
+box_weight = 2.0
+focal_alpha = 0.75
+focal_gamma = 2.0
+box_loss = "giou"
+nwd_constant = 32.0
+
+# Hungarian matching costs of RT-DETR. The matcher never sees ignored regions.
+[matcher]
+class_cost = 2.0
+l1_cost = 5.0
+giou_cost = 2.0
+focal_alpha = 0.25
+focal_gamma = 2.0
+
+[training]
+seed = 2026
+epochs = 5
+batch_size = 2
+num_workers = 2
+learning_rate = 0.0001
+backbone_learning_rate = 0.00001
+weight_decay = 0.0001
+gradient_clip_norm = 0.1
+warmup_updates = 500
+flip_probability = 0.5
+checkpoint_seconds = 600
+
+[evaluation]
+batch_size = 2
+num_workers = 2
+speed_batch_size = 1
+speed_frames = 300
+
+[probe]
+updates = 40
+validation_frames = 60
+
+[export]
+should_export_test_predictions = true
+
+[experiments.baseline_q300]
+
+[experiments.nwd_loss.loss]
+box_loss = "nwd"
+
+[experiments.queries_500.model]
+num_queries = 500
+
+[experiments.denoising_300.model]
+num_denoising = 300
+
+[experiments.shared_lr.training]
+backbone_learning_rate = 0.0001
