@@ -311,8 +311,8 @@ checkpoint utilities rather than introducing another training loop.
    to an incompatible hosted interpreter. Record the actual Python, CUDA, GPU and
    library versions. The current Kaggle notebook parses on Python 3.11 or newer;
    the Colab notebook uses Python 3.12 or newer.
-3. Execute the storage write/read/restore probe and inspect the experiment table
-   before starting the explicit training cell. One Run All invocation may perform
+3. Inspect the experiment table and restored progress before the training cell.
+   Keep synthetic storage and GPU probes out of the training path. One Run All invocation may perform
    setup and then training once authorization is complete. Avoid simultaneous runs.
 4. Browser disconnection may leave the runtime running, but session expiry and GPU
    quota can terminate it. Inspect active execution and saved progress before
@@ -345,8 +345,8 @@ checkpoint utilities rather than introducing another training loop.
 5. Fetch and verify the inputs required by the selected entry notebook: RetinaNet
    reads code and data archives from Drive; Faster R-CNN reads code from Drive and
    competition data from attached Kaggle inputs. Restore checkpoints from Drive.
-   Check write permission and available quota, then perform a real small
-   checkpoint upload/download/restore probe before expensive training. Do not use
+   Check write permission and available quota. Verify actual checkpoint transfers
+   through the normal save and restore path. Do not use
    `google.colab.drive.mount()` on Kaggle or assume `/kaggle/working` is durable.
 6. Execute setup, inspect restored progress, then start the explicit training cell.
    For native background execution, use Save Version → Save & Run All with secret
@@ -356,6 +356,27 @@ checkpoint utilities rather than introducing another training loop.
    for a final checkpoint and full validation. On planned pause or interruption,
    rerun setup and training with the same batch ID and recipe. Completed runs skip
    and interrupted runs resume automatically from the last verified durable state.
+
+### Test inference and submission export
+
+1. Prepare test inference and CSV export together with every Kaggle training notebook.
+   Run inference on the Kaggle GPU immediately after each completed experiment, using
+   the same runtime and saved model settings. Do not default to downloading large weights
+   and running full test inference on the Mac. Local inference requires an explicit request.
+2. Keep an inference-only mode for completed checkpoints. It must restore the selected
+   final or explicitly chosen best checkpoint, skip training, and export every test image.
+   Validate the actual test_images.csv and test paths; a train/validation archive is insufficient.
+3. Stage only the images needed by the selected mode. Record checkpoint and test metadata
+   hashes, class conversion, resize/NMS settings and the selected epoch with each CSV.
+   Use sample_submission.csv when present; otherwise state validation against test_images.csv.
+4. Write descriptive CSV filenames under `/kaggle/working/submissions/`, and include CSVs
+   and export metadata in verified Drive snapshots. Reuse completed exports only when
+   checkpoint, test metadata and CSV hashes match. Never publish a partly written CSV.
+5. Current entry: `experiments/04_data_experiments_kaggle.ipynb`, with
+   `SHOULD_TRAIN = False` and `SHOULD_EXPORT_SUBMISSIONS = True` for the three completed
+   Faster R-CNN data experiments. For future training enable both switches. Keep the
+   updated `controlled_data_submissions_project.zip` in `hm2_retinanet/inputs/` on Drive.
+   Export CSVs without automatically submitting them to the competition.
 
 ### Required pipeline for every future experiment
 
@@ -389,18 +410,17 @@ checkpoint utilities rather than introducing another training loop.
     means the complete configured experiment, not necessarily all training frames.
     Explain whether Run All starts training. Preserve existing seeds, scientific
     settings and run identities during operational fixes.
-06. Use the shared save/download/verify/restore probe before expensive training.
-    Inspect helper return contracts instead of assuming result keys, even in logging.
-    `verify_drive_api_checkpoint` returns `verified`, `step` and `file_id`, not
-    `sha256`; the mounted-Drive probe has a different contract. Reuse the established
-    calls and log documented fields or the full probe result.
+06. Start the requested training run without synthetic GPU or storage probes and
+    without a `probe.json` prerequisite. Keep actual checkpoint checksum verification
+    and exact-recipe compatibility checks in normal save and restore operations.
+    Log effective training controls so a disabled run is visible in hosted logs.
 07. Use the same persistence contract everywhere: save complete training state locally
     and atomically, publish a finished snapshot, verify its durable Drive copy, then
     advance `CURRENT.json`. Save periodically, at epoch boundaries, after validation
     and on completion. Stop on persistence failure. Resume compatible state including
     pending validation and skip completed work. Follow the recovery rules below.
 08. Test the actual setup cells against an empty temporary filesystem and simulated
-    API responses, including download, extraction, storage probe, snapshot publication
+    API responses, including download, extraction, snapshot publication
     and restart restoration. Reuse focused regressions in `tests/test_drive_api.py`.
     Schema, syntax and type checks alone do not verify a working hosted setup.
     Report simulated, real API and GPU verification separately; never launch full
@@ -421,6 +441,15 @@ checkpoint utilities rather than introducing another training loop.
     invent metrics or restart a completed run to check its status.
 
 ### Automatic checkpoints and recovery
+
+Training entry points must work in a fresh hosted runtime without diagnostic switches
+or temporary probe files. Do not insert synthetic GPU or storage probes into the training
+path. The controlled-experiment Kaggle notebook currently exports submissions for completed
+photometric augmentation, repeat factor sampling and higher input resolution, in that order.
+Enable training explicitly for future runs and export after completion on the same Kaggle GPU.
+Use one session deadline for the full queue, bind each persistence callback to its own
+Drive folder, skip completed training and stop the queue when a run pauses.
+Research notebooks keep training disabled. Preserve normal checkpoint integrity checks.
 
 1. Save the complete state: model, optimizer, scheduler, AMP scaler, exact config,
    completed epoch, global optimizer step, image exposures, history and RNG states.

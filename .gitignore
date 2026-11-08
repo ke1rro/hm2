@@ -246,3 +246,6 @@ data/*
 # Generated submission files are kept on Drive and cached locally
 submissions/*.csv
 submissions/*.json
+
+# Generated notebook PDF exports
+/output/pdf/

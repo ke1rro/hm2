@@ -265,6 +265,16 @@ def train_steps(
                 "learning_rate": optimizer.param_groups[0]["lr"],
                 "optimizer_updated": is_updated,
                 "image_count": len(images),
+                **(
+                    {
+                        "gpu_allocated_bytes": torch.cuda.memory_allocated(device),
+                        "gpu_peak_allocated_bytes": torch.cuda.max_memory_allocated(device),
+                        "gpu_peak_reserved_bytes": torch.cuda.max_memory_reserved(device),
+                        "gpu_free_bytes": torch.cuda.mem_get_info(device)[0],
+                    }
+                    if is_cuda
+                    else {}
+                ),
             }
         )
         if on_step is not None and on_step(history[-1]):

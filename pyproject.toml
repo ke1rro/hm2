@@ -5,6 +5,7 @@ description = "UCU AI 2026 object detection homework with VisDrone video frames"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
+    "faster-coco-eval>=1.8.0",
     "google-api-python-client>=2.180",
     "google-auth>=2.40",
     "google-auth-oauthlib>=1.2",
@@ -13,7 +14,7 @@ dependencies = [
     "jupyterlab>=4.6.5",
     "kagglehub>=1.0.3",
     "numpy>=2.5.4",
-    "opencv-python-headless>=5.0.0.93",
+    "opencv-python>=5.0.0.93",
     "pillow>=13.0.0",
     "plotly>=7.1.0",
     "polars>=2.1.0",
@@ -24,6 +25,7 @@ dependencies = [
     "torchvision>=0.29.2",
     "tqdm>=4.70.1",
     "transformers>=5.22.2",
+    "ultralytics==8.3.235",
 ]
 
 [build-system]
@@ -41,7 +43,7 @@ known_first_party = ["hm2"]
 skip_gitignore = true
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [dependency-groups]
 dev = [
