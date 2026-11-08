@@ -372,7 +372,7 @@ checkpoint utilities rather than introducing another training loop.
 4. Write descriptive CSV filenames under `/kaggle/working/submissions/`, and include CSVs
    and export metadata in verified Drive snapshots. Reuse completed exports only when
    checkpoint, test metadata and CSV hashes match. Never publish a partly written CSV.
-5. Current entry: `experiments/03_data_experiments_kaggle.ipynb`, with
+5. Current entry: `experiments/04_data_experiments_kaggle.ipynb`, with
    `SHOULD_TRAIN = False` and `SHOULD_EXPORT_SUBMISSIONS = True` for the three completed
    Faster R-CNN data experiments. For future training enable both switches. Keep the
    updated `controlled_data_submissions_project.zip` in `hm2_retinanet/inputs/` on Drive.

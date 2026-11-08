@@ -343,6 +343,28 @@ def sync_results_to_drive_api(api: DriveApi, local: Path, batch_folder_id: str) 
     return _upload_generation(api, local, api.folder(batch_folder_id, "summary"), manifest)
 
 
+def download_current_generation(api: DriveApi, folder_id: str, destination: Path) -> dict:
+    """Download every file of the committed generation that CURRENT.json points to.
+
+    Args:
+        api: Authenticated Drive file transport.
+        folder_id: Folder written by sync_checkpoint_to_drive_api.
+        destination: Local directory receiving the verified files.
+
+    Returns:
+        The committed manifest, or an empty mapping when nothing has been published.
+    """
+    children = api.children(folder_id)
+    if "CURRENT.json" not in children:
+        return {}
+    manifest = api.read_json(children["CURRENT.json"]["id"])
+    generations = api.children(api.folder(folder_id, "generations"))
+    files = api.children(generations[manifest["generation"]]["id"])
+    for name, digest in manifest["files"].items():
+        api.download(files[name]["id"], destination / name, digest)
+    return manifest
+
+
 def verify_drive_api_checkpoint(api: DriveApi, local: Path, folder_id: str) -> dict:
     """Exercise checkpoint serialization, API upload, download, integrity and state restoration.
 

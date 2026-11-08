@@ -3,6 +3,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 import numpy as np
+from faster_coco_eval import COCO as FasterCOCO
+from faster_coco_eval import COCOeval_faster
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 
@@ -17,8 +19,21 @@ def _mean_precision(values: np.ndarray) -> float | None:
     return float(np.mean(values)) if values.size else None
 
 
+def _set_empty_detections(detections: COCO | FasterCOCO, ground_truth: COCO | FasterCOCO) -> None:
+    detections.dataset = {
+        "images": ground_truth.dataset["images"],
+        "categories": ground_truth.dataset["categories"],
+        "annotations": [],
+    }
+    detections.createIndex()
+
+
 def evaluate_coco_max_dets(
-    annotation_path: Path, predictions: list[dict], image_ids: list[int], max_detections: int
+    annotation_path: Path,
+    predictions: list[dict],
+    image_ids: list[int],
+    max_detections: int,
+    backend: str = "pycocotools",
 ) -> dict:
     """Evaluate COCO bbox AP with a configurable per-image detection cap.
 
@@ -27,31 +42,34 @@ def evaluate_coco_max_dets(
     COCOeval.summarize computes overall mAP only at a hard-coded cap of 100 detections.
     Object size bins use the ground-truth area field, which is width times height in
     original-image pixels, and crowd annotations keep detections inside them unpenalized.
+    The faster_coco_eval backend is a C++ reimplementation of the same COCOeval protocol
+    for dense prediction sets; both backends read the same precision array.
 
     Args:
         annotation_path: Original COCO JSON with category-specific crowd annotations.
         predictions: COCO-format detections in original-image pixel xywh.
         image_ids: Exact evaluated source image IDs, including frames with no predictions.
         max_detections: Highest-scoring detections per image that are evaluated.
+        backend: COCOeval implementation, either pycocotools or faster_coco_eval.
 
     Returns:
         COCO AP metrics, nullable per-class AP and the explicit evaluation protocol.
     """
     max_dets = [1, 10, max_detections]
     with redirect_stdout(io.StringIO()):
-        ground_truth = COCO(str(annotation_path))
-        ground_truth.dataset.setdefault("info", {})
-        if predictions:
-            detections = ground_truth.loadRes(predictions)
+        if backend == "faster_coco_eval":
+            faster_truth = FasterCOCO(str(annotation_path))
+            faster_detections = faster_truth.loadRes(predictions) if predictions else FasterCOCO()
+            if not predictions:
+                _set_empty_detections(faster_detections, faster_truth)
+            evaluator = COCOeval_faster(faster_truth, faster_detections, "bbox")
         else:
-            detections = COCO()
-            detections.dataset = {
-                "images": ground_truth.dataset["images"],
-                "categories": ground_truth.dataset["categories"],
-                "annotations": [],
-            }
-            detections.createIndex()
-        evaluator = COCOeval(ground_truth, detections, "bbox")
+            ground_truth = COCO(str(annotation_path))
+            ground_truth.dataset.setdefault("info", {})
+            detections = ground_truth.loadRes(predictions) if predictions else COCO()
+            if not predictions:
+                _set_empty_detections(detections, ground_truth)
+            evaluator = COCOeval(ground_truth, detections, "bbox")
         evaluator.params.imgIds = sorted(image_ids)
         evaluator.params.catIds = list(range(1, 9))
         evaluator.params.maxDets = max_dets
@@ -81,6 +99,7 @@ def evaluate_coco_max_dets(
         "coordinate_system": "Original-image pixel xywh",
         "area_definition": "COCO ground-truth area in original-image pixels",
         "metric": "COCO bbox AP; the competition metric is not defined in the originals",
+        "backend": backend,
     }
 
 

@@ -1,18 +1,18 @@
 # Controlled data experiments
 
-Research notebooks 05 through 08 read metadata and measured results with training
+Research notebooks 06 through 09 read metadata and measured results with training
 disabled by default. The Kaggle execution notebook currently exports submissions for the three completed Faster R-CNN ablations without training. No new results are claimed before execution.
 
 | Experiment                 | Research notebook                                    | Single changed factor                                                  | Detector baseline                     |
 | -------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------- |
-| `photometric_augmentation` | [05](../notebooks/05_photometric_augmentation.ipynb) | Mild brightness, contrast and saturation with probability 0.30         | Faster R-CNN stride 5                 |
-| `input_resolution`         | [06](../notebooks/06_input_resolution.ipynb)         | Resize 800/1280 instead of 640/1024                                    | Faster R-CNN stride 5                 |
-| `yolo_baseline`            | [07](../notebooks/07_yolo_baseline.ipynb)            | YOLO11s anchor-free architecture baseline; existing SGD/AMP loop       | Faster R-CNN and RetinaNet references |
-| `repeat_factor_sampling`   | [08](../notebooks/08_repeat_factor_sampling.ipynb)   | Fixed-budget image sampling using capped class-presence repeat factors | Faster R-CNN stride 5                 |
+| `photometric_augmentation` | [06](../notebooks/06_photometric_augmentation.ipynb) | Mild brightness, contrast and saturation with probability 0.30         | Faster R-CNN stride 5                 |
+| `input_resolution`         | [07](../notebooks/07_input_resolution.ipynb)         | Resize 800/1280 instead of 640/1024                                    | Faster R-CNN stride 5                 |
+| `yolo_baseline`            | [08](../notebooks/08_yolo_baseline.ipynb)            | YOLO11s anchor-free architecture baseline; existing SGD/AMP loop       | Faster R-CNN and RetinaNet references |
+| `repeat_factor_sampling`   | [09](../notebooks/09_repeat_factor_sampling.ipynb)   | Fixed-budget image sampling using capped class-presence repeat factors | Faster R-CNN stride 5                 |
 
 The Python modules here contain experiment-specific logic. `protocol.py` only joins
 these functions to the existing detector loops and loads saved measurements.
-The existing execution notebooks 00 through 02 remain available for the original runs.
+The existing execution notebooks 00 through 03 remain available for the original runs.
 
 ## YOLO11s baseline
 
@@ -87,10 +87,10 @@ Prepare or restore the original metadata using notebook 00. No automatic data
 or weight download occurs in the four research notebooks. Launch one independently:
 
 ```bash
-uv run jupyter lab notebooks/05_photometric_augmentation.ipynb
-uv run jupyter lab notebooks/06_input_resolution.ipynb
-uv run jupyter lab notebooks/07_yolo_baseline.ipynb
-uv run jupyter lab notebooks/08_repeat_factor_sampling.ipynb
+uv run jupyter lab notebooks/06_photometric_augmentation.ipynb
+uv run jupyter lab notebooks/07_input_resolution.ipynb
+uv run jupyter lab notebooks/08_yolo_baseline.ipynb
+uv run jupyter lab notebooks/09_repeat_factor_sampling.ipynb
 ```
 
 Use `HM2_DATA_DIR` for an existing extracted dataset, `HM2_METADATA_DIR` for the
@@ -117,7 +117,7 @@ No model initialization is triggered by its default research-notebook execution.
    weights, images and execution notebooks. Upload this as a separate file to
    `My Drive/hm2_retinanet/inputs/`. Preserve the existing baseline archives.
 
-2. Import [03_data_experiments_kaggle.ipynb](03_data_experiments_kaggle.ipynb) into a
+2. Import [04_data_experiments_kaggle.ipynb](04_data_experiments_kaggle.ipynb) into a
    private Kaggle notebook. Start a fresh session, enable Internet, attach the same
    competition dataset and enable access to secret `HM2_DRIVE_TOKEN`. Follow the
    existing OAuth setup in [AGENTS.md](../AGENTS.md#hosted-experiment-execution).

@@ -53,7 +53,33 @@ is pinned and recorded. This is a model-family baseline, not a data ablation.
 `experiments.protocol.load_settings` resolves each recipe. Disabled features return
 the original baseline settings, and experimental settings are included in checkpoint
 identity. Worker counts, storage and runtime controls keep their existing behavior.
-Research notebooks 05 through 08 and the
-[shared Kaggle entry](../experiments/03_data_experiments_kaggle.ipynb) expose execution
+Research notebooks 06 through 09 and the
+[shared Kaggle entry](../experiments/04_data_experiments_kaggle.ipynb) expose execution
 switches explicitly. Full protocol and run instructions are in
 [experiments/README.md](../experiments/README.md).
+
+## Native YOLO11s pipeline
+
+`yolo11s_native_1280.toml` configures the final pipeline in
+[notebook 10](../notebooks/10_yolo11s_native_pipeline.ipynb). It has four required
+tables, read by `hm2.yolo_pipeline.load_pipeline_settings`:
+
+- `[dataset]`: training `frame_stride`, the long side `image_size` of the prepared
+  JPEGs, `jpeg_quality`, `should_mask_ignored`, `ignore_fill` and `validation_clips`.
+  Validation clips are held out whole from either official split; every other labeled
+  clip trains. The table also records the expected frame, clip and test counts checked
+  before training.
+- `[model]`: `backend = "ultralytics"`, `model`, the initial checkpoint `model_id` and
+  the pinned `ultralytics_version`. `scripts/build_yolo_bundle.py` creates
+  `yolo11s_visdrone_det_8cls.pt` from the pinned VisDrone-DET checkpoint and ships it in
+  the code bundle.
+- `[training]`: native Ultralytics arguments passed explicitly (optimizer, schedule,
+  augmentation, `batch`, `device`, `seed`), the throughput-based epoch plan
+  (`budget_hours`, `min_epochs`, `max_epochs`, `validation_time_margin`) and the
+  `smoke_fraction` of the throughput check.
+- `[inference]`: candidate `image_sizes` compared on validation, `confidence`, NMS
+  `iou`, `max_detections`, `batch` and `half`.
+
+There are no hidden defaults. Changing `device`, `batch` or `image_size` changes the
+experiment. The design and run instructions are in
+[docs/yolo_native_pipeline.md](../docs/yolo_native_pipeline.md).

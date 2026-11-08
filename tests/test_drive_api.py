@@ -12,6 +12,7 @@ from googleapiclient.http import HttpMockSequence
 from hm2 import drive_api
 from hm2.experiment_checkpoint import publish_snapshot, save_checkpoint
 from hm2.retinanet import make_optimizer
+from hm2.yolo_pipeline import CheckpointMirror
 
 
 def _snapshot(directory: Path, epoch: int, experiment: str) -> None:
@@ -189,7 +190,7 @@ def test_download_keeps_old_copy_when_transport_returns_corrupt_bytes(tmp_path: 
     "notebook_name",
     [
         "02_faster_rcnn_experiments_kaggle.ipynb",
-        "03_data_experiments_kaggle.ipynb",
+        "04_data_experiments_kaggle.ipynb",
     ],
 )
 def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
@@ -217,7 +218,7 @@ def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
     output = tmp_path / "output"
     names = (
         ["photometric_augmentation", "repeat_factor_sampling", "input_resolution"]
-        if notebook_name.startswith("03_")
+        if notebook_name.startswith("04_")
         else ["baseline_stride5"]
     )
     outputs = {name: output / name for name in names}
@@ -246,8 +247,8 @@ def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
         "BATCH_ID": "faster_rcnn_test",
         "OUTPUT_DIRECTORY": output,
         "OUTPUT": output,
-        "SHOULD_TRAIN": not notebook_name.startswith("03_"),
-        "SHOULD_EXPORT_SUBMISSIONS": notebook_name.startswith("03_"),
+        "SHOULD_TRAIN": not notebook_name.startswith("04_"),
+        "SHOULD_EXPORT_SUBMISSIONS": notebook_name.startswith("04_"),
         "SHOULD_RUN_GPU_PROBE": False,
         "drive_root": str(remote),
         "service": SimpleNamespace(
@@ -257,7 +258,7 @@ def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
         ),
     }
     exec(compile(source, "notebook-drive-setup", "exec"), namespace)
-    if notebook_name.startswith("03_"):
+    if notebook_name.startswith("04_"):
         assert not (remote / "batches/faster_rcnn_test/_probe_api").exists()
         assert namespace["RESTORED_PROGRESS"] == {name: {} for name in names}
         for epoch, name in enumerate(names, 1):
@@ -294,7 +295,7 @@ def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
     "notebook_name,archive_name",
     [
         ("02_faster_rcnn_experiments_kaggle.ipynb", "faster_rcnn_epoch1_project.zip"),
-        ("03_data_experiments_kaggle.ipynb", "controlled_data_submissions_project.zip"),
+        ("04_data_experiments_kaggle.ipynb", "controlled_data_submissions_project.zip"),
     ],
 )
 def test_faster_rcnn_notebook_bootstrap_downloads_into_a_new_runtime(
@@ -319,7 +320,7 @@ def test_faster_rcnn_notebook_bootstrap_downloads_into_a_new_runtime(
         "src/hm2/drive_api.py",
         "config/faster_rcnn_baseline.toml",
     )
-    if notebook_name.startswith("03_"):
+    if notebook_name.startswith("04_"):
         required += (
             "config/data_photometric_augmentation.toml",
             "config/data_input_resolution.toml",
@@ -401,3 +402,27 @@ def test_submission_csv_is_restored_with_completed_checkpoint(tmp_path: Path) ->
         api, str(remote), restored, {"experiment_id": "input_resolution"}, tmp_path / "cache"
     )
     assert (restored / csv.name).read_bytes() == csv.read_bytes()
+
+
+def test_native_yolo_mirror_round_trips_through_verified_generations(tmp_path: Path) -> None:
+    """Publish native checkpoints through the snapshot transport and restore the newest one."""
+    run, remote = tmp_path / "run", tmp_path / "remote"
+    (run / "weights").mkdir(parents=True)
+    remote.mkdir()
+    api = LocalDrive(remote)
+
+    def publish(directory: Path) -> None:
+        publish_snapshot(directory)
+        drive_api.sync_checkpoint_to_drive_api(api, directory, str(remote))
+
+    mirror = CheckpointMirror(run, tmp_path / "mirror", publish, settle_seconds=0.0)
+    for epoch in (1, 2):
+        (run / "weights" / "last.pt").write_bytes(f"epoch {epoch}".encode())
+        (run / "results.csv").write_text(f"epoch\n{epoch}\n")
+        assert mirror.mirror_once()
+    restored = drive_api.download_current_generation(api, str(remote), tmp_path / "restored")
+    assert set(restored["files"]) == {"last.pt", "results.csv"}
+    assert (tmp_path / "restored" / "last.pt").read_bytes() == b"epoch 2"
+    assert (
+        drive_api.download_current_generation(api, str(tmp_path / "run"), tmp_path / "none") == {}
+    )

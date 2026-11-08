@@ -246,10 +246,10 @@ def test_training_hooks_preserve_cursor_budget_and_best_checkpoint(
 @pytest.mark.parametrize(
     "number,name",
     [
-        ("05", "photometric_augmentation"),
-        ("06", "input_resolution"),
-        ("07", "yolo_baseline"),
-        ("08", "repeat_factor_sampling"),
+        ("06", "photometric_augmentation"),
+        ("07", "input_resolution"),
+        ("08", "yolo_baseline"),
+        ("09", "repeat_factor_sampling"),
     ],
 )
 def test_research_notebook_missing_results_without_training(
@@ -323,7 +323,7 @@ def test_kaggle_data_staging_cell_uses_original_metadata_and_real_pairs(
     output = tmp_path / "output"
     output.mkdir()
     notebook = nbformat.read(
-        Path(__file__).parents[1] / "experiments/03_data_experiments_kaggle.ipynb", 4
+        Path(__file__).parents[1] / "experiments/04_data_experiments_kaggle.ipynb", 4
     )
     stage = notebook.cells[5].source.replace(
         "/kaggle/temp/data_experiment_images", str(tmp_path / "staged")
@@ -425,7 +425,7 @@ def test_kaggle_queue_runs_independent_faster_rcnn_experiments(
         "publish_snapshot": lambda *args: None,
     }
     notebook = nbformat.read(
-        Path(__file__).parents[1] / "experiments/03_data_experiments_kaggle.ipynb", 4
+        Path(__file__).parents[1] / "experiments/04_data_experiments_kaggle.ipynb", 4
     )
     exec(compile(notebook.cells[9].source, "kaggle-queue", "exec"), namespace)
     expected_names = list(names)
@@ -451,7 +451,7 @@ def test_kaggle_execution_default_exports_three_completed_runs() -> None:
     import nbformat
 
     notebook = nbformat.read(
-        Path(__file__).parents[1] / "experiments/03_data_experiments_kaggle.ipynb", 4
+        Path(__file__).parents[1] / "experiments/04_data_experiments_kaggle.ipynb", 4
     )
     assignments: list[ast.stmt] = [
         node
@@ -587,7 +587,7 @@ def test_kaggle_exports_completed_runs_without_training(tmp_path: Path) -> None:
         return {"file": filename, "images": 1}
 
     notebook = nbformat.read(
-        Path(__file__).parents[1] / "experiments/03_data_experiments_kaggle.ipynb", 4
+        Path(__file__).parents[1] / "experiments/04_data_experiments_kaggle.ipynb", 4
     )
     namespace = {
         "SHOULD_TRAIN": False,

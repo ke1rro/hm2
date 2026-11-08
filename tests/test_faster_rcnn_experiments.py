@@ -1,5 +1,6 @@
 import copy
 import csv
+import inspect
 import json
 import shutil
 from pathlib import Path
@@ -14,8 +15,11 @@ from hm2.experiment_checkpoint import write_json
 from hm2.faster_rcnn import IgnoreAwareRoIHeads
 from hm2.faster_rcnn_experiments import (
     RECORDED_MODULES,
+    _build_training_state,
     aggregate_loss_curve,
+    build_experiment_config,
     compute_source_identity,
+    describe_environment,
     export_test_submission,
     find_competition_root,
     find_previous_output,
@@ -25,6 +29,7 @@ from hm2.faster_rcnn_experiments import (
     measure_inference_speed,
     prepare_experiment_tables,
     resolve_model_arguments,
+    resolve_training_recipe,
     restore_previous_output,
     run_experiment,
     run_timing_probe,
@@ -418,3 +423,30 @@ def test_loss_curve_windows_do_not_cross_epochs(finished_run: dict) -> None:
     assert curve["batches"].to_list() == [2, 1, 1, 2]
     assert curve["step"].to_list() == [2, 3, 4, 6]
     assert curve["loss"].is_finite().all()
+
+
+def test_default_recipe_and_builder_are_the_faster_rcnn_baseline() -> None:
+    """Catch the shared-loop refactor changing what the B1 run records, builds or hashes."""
+    keys = ["train/clip/0000001", "train/clip/0000006"]
+    config, builder = resolve_training_recipe(SETTINGS, "baseline_stride5", keys, "digest")
+    assert config == build_experiment_config(SETTINGS, "baseline_stride5", keys, "digest")
+    assert builder is _build_training_state
+    custom = {"experiment_id": "other"}
+
+    def other_builder(settings: dict, batches: int, device: torch.device) -> tuple:
+        return ()
+
+    assert resolve_training_recipe(SETTINGS, "other", keys, "digest", custom, other_builder) == (
+        custom,
+        other_builder,
+    )
+    run_parameters = inspect.signature(run_experiment).parameters
+    assert run_parameters["experiment_config"].default is None
+    assert run_parameters["build_training_state"].default is None
+    assert run_parameters["describe_step"].default is None
+    assert run_parameters["recorded_modules"].default == RECORDED_MODULES
+    assert inspect.signature(describe_environment).parameters["modules"].default == (
+        RECORDED_MODULES
+    )
+    assert inspect.signature(find_previous_output).parameters["family"].default == "faster_rcnn"
+    assert hash_sources() == hash_sources(RECORDED_MODULES)
