@@ -33,3 +33,27 @@ We evaluate the entire official validation split after each epoch and select
 times the subset's image exposures and optimizer-update budget. This comparison
 combines data coverage and training budget; exact competition-specific ignore
 semantics remain unverified.
+
+## Controlled data ablations
+
+`data_photometric_augmentation.toml`, `data_input_resolution.toml` and
+`data_repeat_factor_sampling.toml` retain the tables from
+`faster_rcnn_baseline.toml`. The extra `[photometric]` table contains brightness,
+contrast and saturation intervals plus probability. `[sampling]` contains the
+image-presence threshold and explicit repeat cap. Higher resolution changes only
+`[model]` min_size/max_size to 800/1280. Test export is not part of these ablations.
+
+`yolo_baseline.toml` replaces the unrun ignore-aware RetinaNet proposal with an
+anchor-free YOLO11s baseline. It uses the same dataset/training/evaluation tables,
+`backend = "ultralytics"`, `model_id = "yolo11s.pt"`, eight classes and explicit
+CIoU/BCE/DFL gains in `[loss]`. The shared loop owns SGD, AMP and full resumable checkpoints, so native
+Ultralytics augmentation/optimizer defaults do not apply. Package version 8.3.235
+is pinned and recorded. This is a model-family baseline, not a data ablation.
+
+`experiments.protocol.load_settings` resolves each recipe. Disabled features return
+the original baseline settings, and experimental settings are included in checkpoint
+identity. Worker counts, storage and runtime controls keep their existing behavior.
+Research notebooks 05 through 08 and the
+[shared Kaggle entry](../experiments/03_data_experiments_kaggle.ipynb) expose execution
+switches explicitly. Full protocol and run instructions are in
+[experiments/README.md](../experiments/README.md).

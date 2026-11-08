@@ -13,7 +13,7 @@ dependencies = [
     "jupyterlab>=4.6.5",
     "kagglehub>=1.0.3",
     "numpy>=2.5.4",
-    "opencv-python-headless>=5.0.0.93",
+    "opencv-python>=5.0.0.93",
     "pillow>=13.0.0",
     "plotly>=7.1.0",
     "polars>=2.1.0",
@@ -22,6 +22,7 @@ dependencies = [
     "torch>=2.15.0",
     "torchvision>=0.29.2",
     "tqdm>=4.70.1",
+    "ultralytics==8.3.235",
 ]
 
 [build-system]
@@ -39,7 +40,7 @@ known_first_party = ["hm2"]
 skip_gitignore = true
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [dependency-groups]
 dev = [

@@ -22,7 +22,7 @@ from torchvision.models.detection import FasterRCNN
 
 from hm2.data import load_tables
 from hm2.dense_evaluation import evaluate_detections
-from hm2.detection_data import make_loader, select_frames
+from hm2.detection_data import DetectionDataset, make_loader, select_frames
 from hm2.evaluation import predictions_to_coco
 from hm2.experiment_checkpoint import load_checkpoint, publish_snapshot, save_checkpoint, write_json
 from hm2.faster_rcnn import (
@@ -307,7 +307,13 @@ def build_experiment_config(
         A JSON-compatible dictionary of lists, numbers and strings.
     """
     training = settings["training"]
+    is_yolo = settings["model"].get("backend") == "ultralytics"
     return {
+        **(
+            {"data_experiment": settings["data_experiment"]}
+            if "data_experiment" in settings
+            else {}
+        ),
         "experiment_id": experiment_name,
         "seed": training["seed"],
         "epochs": training["epochs"],
@@ -318,14 +324,23 @@ def build_experiment_config(
         "frame_stride": settings["dataset"]["frame_stride"],
         "selected_frame_count": len(selected_keys),
         "dataset_selection_sha256": source_identity,
-        "model": resolve_model_arguments(settings["model"]),
+        "model": settings["model"] if is_yolo else resolve_model_arguments(settings["model"]),
         "optimizer": {"backend": "SGD", "momentum": 0.9, "weight_decay": 1e-4},
-        "loss": {
-            "rpn_objectness": "binary_cross_entropy",
-            "rpn_box_regression": "smooth_l1",
-            "roi_classification": "cross_entropy",
-            "roi_box_regression": "smooth_l1",
-        },
+        "loss": (
+            {
+                "box_regression": "ciou",
+                "classification": "binary_cross_entropy",
+                "distribution": "dfl",
+                "gains": settings["loss"],
+            }
+            if is_yolo
+            else {
+                "rpn_objectness": "binary_cross_entropy",
+                "rpn_box_regression": "smooth_l1",
+                "roi_classification": "cross_entropy",
+                "roi_box_regression": "smooth_l1",
+            }
+        ),
         "checkpoint_selection": "final epoch, never chosen on validation",
     }
 
@@ -431,10 +446,17 @@ def _record_session(output: Path, environment: dict, resumed_step: int) -> None:
 
 
 def _build_training_state(
-    settings: dict, batches: int, device: torch.device
-) -> tuple[FasterRCNN, Optimizer, LRScheduler, torch.amp.GradScaler]:
+    settings: dict,
+    batches: int,
+    device: torch.device,
+    model_factory: Callable[[dict], torch.nn.Module] | None = None,
+) -> tuple[torch.nn.Module, Optimizer, LRScheduler, torch.amp.GradScaler]:
     training = settings["training"]
-    model = build_faster_rcnn(allow_download=True, seed=training["seed"], **settings["model"])
+    model = (
+        model_factory(settings)
+        if model_factory is not None
+        else build_faster_rcnn(allow_download=True, seed=training["seed"], **settings["model"])
+    )
     model.to(device)
     optimizer, scheduler = make_optimizer(
         model,
@@ -457,6 +479,10 @@ def run_experiment(
     resume: bool = True,
     seconds: float | None = None,
     on_checkpoint: Callable[[Path], None] | None = None,
+    stop_after_epoch: int | None = None,
+    dataset_factory: Callable[..., DetectionDataset] | None = None,
+    order_factory: Callable[[int, int, int], list[int]] | None = None,
+    model_factory: Callable[[dict], torch.nn.Module] | None = None,
 ) -> dict:
     """Train for the configured epochs, validate after each one and keep resumable records.
 
@@ -479,6 +505,11 @@ def run_experiment(
         resume: Whether an existing checkpoint may be restored.
         seconds: Optional training time budget for this call.
         on_checkpoint: Optional hook called with the output directory after each checkpoint.
+        stop_after_epoch: Optional completed epoch at which to pause after validation,
+            preserving the configured scheduler budget.
+        dataset_factory: Optional training-only dataset constructor for a recorded ablation.
+        order_factory: Optional fixed-length training order for a recorded sampling ablation.
+        model_factory: Optional model adapter with the shared image/target and loss contract.
 
     Returns:
         The run status, including whether every epoch and its validation are complete.
@@ -486,6 +517,12 @@ def run_experiment(
     output.mkdir(parents=True, exist_ok=True)
     logger = _attach_execution_log(output, experiment_name)
     training, evaluation = settings["training"], settings["evaluation"]
+    if (
+        dataset_factory is not None or order_factory is not None or model_factory is not None
+    ) and "data_experiment" not in settings:
+        raise ValueError("Training hooks require recorded data_experiment settings.")
+    if stop_after_epoch is not None and not 1 <= stop_after_epoch <= training["epochs"]:
+        raise ValueError("stop_after_epoch must be within the configured epoch budget.")
     selected, validation = select_experiment_frames(frames, settings["dataset"])
     selected_keys = selected["image_key"].to_list()
     config = build_experiment_config(
@@ -496,7 +533,11 @@ def run_experiment(
     )
     device = _select_device()
     batches = math.ceil(selected.height / training["batch_size"])
-    model, optimizer, scheduler, scaler = _build_training_state(settings, batches, device)
+    model, optimizer, scheduler, scaler = (
+        _build_training_state(settings, batches, device)
+        if model_factory is None
+        else _build_training_state(settings, batches, device, model_factory=model_factory)
+    )
     progress = _new_progress()
     latest = output / "latest.pt"
     saved_signature = None
@@ -507,6 +548,11 @@ def run_experiment(
             "extra_state"
         ]
         saved_signature = _progress_signature(progress)
+    if stop_after_epoch is not None and (
+        progress["epochs_completed"] > stop_after_epoch
+        or (progress["epochs_completed"] == stop_after_epoch and progress["batch_cursor"] > 0)
+    ):
+        raise ValueError("Checkpoint has passed the requested epoch. Use a new batch to retrain.")
     environment = describe_environment(device)
     write_json(output / "config.json", config)
     write_json(output / "model.json", summarize_model(model))
@@ -531,8 +577,10 @@ def run_experiment(
         }
 
     def should_pause() -> bool:
-        return (output / "STOP").exists() or (
-            seconds is not None and time.monotonic() - started >= seconds
+        return (
+            (output / "STOP").exists()
+            or (seconds is not None and time.monotonic() - started >= seconds)
+            or (stop_after_epoch is not None and progress["epochs_completed"] >= stop_after_epoch)
         )
 
     def persist() -> None:
@@ -591,6 +639,23 @@ def run_experiment(
             }
             progress["metrics"].append(row)
             progress["pending_evaluation"] = False
+            if "data_experiment" in settings:
+                previous = [
+                    item["metrics"]["max_dets_100"]["map"] for item in progress["metrics"][:-1]
+                ]
+                score = metrics["max_dets_100"]["map"]
+                if score is not None and (not previous or score > max(previous)):
+                    save_checkpoint(
+                        output / "best.pt",
+                        model,
+                        optimizer,
+                        scheduler,
+                        progress["global_step"],
+                        config,
+                        scaler,
+                        progress,
+                    )
+                    write_json(output / "best_metrics.json", row)
             write_json(output / f"epoch_{epoch_number}_metrics.json", row)
             if epoch_number == training["epochs"]:
                 _write_compact_json(output / "val_predictions.json", records)
@@ -601,10 +666,15 @@ def run_experiment(
         if should_pause():
             break
         epoch = progress["epochs_completed"]
-        ordered = selected[epoch_order(selected.height, training["seed"], epoch)]
+        order = (order_factory or epoch_order)(selected.height, training["seed"], epoch)
+        if len(order) != selected.height:
+            raise ValueError("Training order must preserve the baseline image and batch budget.")
+        ordered = selected[order]
+        if order_factory is not None:
+            write_json(output / "sampling_order.json", {"epoch": epoch, "indices": order})
         remaining = ordered.slice(progress["batch_cursor"] * training["batch_size"])
         loader = make_loader(
-            IgnoreAwareDetectionDataset(
+            (dataset_factory or IgnoreAwareDetectionDataset)(
                 image_root,
                 remaining,
                 objects,
@@ -638,7 +708,7 @@ def run_experiment(
             is_pausing = should_pause()
             if is_pausing or time.monotonic() - last_save >= training["checkpoint_seconds"]:
                 persist()
-            return is_pausing
+            return is_pausing or should_pause()
 
         train_steps(
             model,
@@ -730,6 +800,8 @@ def run_timing_probe(
     device = _select_device()
     batches = math.ceil(selected.height / training["batch_size"])
     model, optimizer, scheduler, scaler = _build_training_state(settings, batches, device)
+    if not isinstance(model, FasterRCNN):
+        raise TypeError("Use the adapter memory probe for non-Faster-R-CNN models.")
     loader = make_loader(
         IgnoreAwareDetectionDataset(
             image_root,

@@ -33,7 +33,7 @@ def publish_snapshot(output: Path) -> None:
     Retain at least three local generations and all generations younger than 30 minutes.
 
     Args:
-        output: Experiment directory containing completed checkpoints, JSON and logs.
+        output: Experiment directory containing completed checkpoints, JSON, CSV and logs.
     """
     sync = output / "sync"
     sync.mkdir(exist_ok=True)
@@ -42,7 +42,7 @@ def publish_snapshot(output: Path) -> None:
     snapshot.mkdir()
     files = {}
     for source in sorted(output.iterdir()):
-        if source.suffix not in {".pt", ".json", ".log"} or not source.is_file():
+        if source.suffix not in {".pt", ".json", ".log", ".csv"} or not source.is_file():
             continue
         destination = snapshot / source.name
         if source.suffix == ".pt":

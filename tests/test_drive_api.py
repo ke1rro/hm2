@@ -185,8 +185,15 @@ def test_download_keeps_old_copy_when_transport_returns_corrupt_bytes(tmp_path: 
     assert destination.read_bytes() == b"previous good checkpoint"
 
 
+@pytest.mark.parametrize(
+    "notebook_name",
+    [
+        "02_faster_rcnn_experiments_kaggle.ipynb",
+        "03_data_experiments_kaggle.ipynb",
+    ],
+)
 def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, notebook_name: str
 ) -> None:
     """Execute the notebook's Drive setup with real checkpoint IO and a local transport."""
     from types import SimpleNamespace
@@ -199,7 +206,7 @@ def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
     api = LocalDrive(remote)
     monkeypatch.setattr(drive_api, "DriveApi", lambda service: api)
     notebook = nbformat.read(
-        Path(__file__).parents[1] / "experiments/02_faster_rcnn_experiments_kaggle.ipynb",
+        Path(__file__).parents[1] / "experiments" / notebook_name,
         as_version=4,
     )
     source = notebook.cells[7].source.split("status_path =")[0]
@@ -208,6 +215,12 @@ def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
     settings = {"dataset": {}}
     config = {"experiment_id": "baseline_stride5"}
     output = tmp_path / "output"
+    names = (
+        ["photometric_augmentation", "repeat_factor_sampling", "input_resolution"]
+        if notebook_name.startswith("03_")
+        else ["baseline_stride5"]
+    )
+    outputs = {name: output / name for name in names}
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     namespace: dict = {
@@ -216,18 +229,26 @@ def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
         "LOGGER": logging.getLogger(__name__),
         "verify_selection": lambda *args: None,
         "compute_source_identity": lambda *args: "selection-hash",
-        "build_experiment_config": lambda *args: config,
+        "build_experiment_config": lambda settings, name, *args: {"experiment_id": name},
         "find_previous_output": lambda *args: None,
         "selected": frames,
         "validation": frames,
         "SETTINGS": settings,
         "EXPERIMENT": "baseline_stride5",
+        "EXPERIMENTS": names,
+        "SETTINGS_BY_EXPERIMENT": {name: settings for name in names},
+        "OUTPUTS": outputs,
         "SOURCE_ROOT": tmp_path,
+        "IMAGE_ROOT": tmp_path,
         "STAGE": "full",
         "IS_KAGGLE": True,
         "KAGGLE_INPUT": inputs,
         "BATCH_ID": "faster_rcnn_test",
         "OUTPUT_DIRECTORY": output,
+        "OUTPUT": output,
+        "SHOULD_TRAIN": not notebook_name.startswith("03_"),
+        "SHOULD_EXPORT_SUBMISSIONS": notebook_name.startswith("03_"),
+        "SHOULD_RUN_GPU_PROBE": False,
         "drive_root": str(remote),
         "service": SimpleNamespace(
             about=lambda: SimpleNamespace(
@@ -236,21 +257,48 @@ def test_faster_rcnn_notebook_drive_setup_and_snapshot_restore(
         ),
     }
     exec(compile(source, "notebook-drive-setup", "exec"), namespace)
-    assert namespace["probe_result"]["verified"]
-    assert namespace["progress"] == {}
-    _snapshot(output, 3, "baseline_stride5")
-    namespace["persist_checkpoint"](output)
-    restored = tmp_path / "restored"
-    progress = drive_api.restore_checkpoint_from_drive_api(
-        api, namespace["run_folder"], restored, config, tmp_path / "restore-cache"
-    )
-    assert progress["epochs_completed"] == 3
-    exec(compile(source, "notebook-drive-setup", "exec"), namespace)
-    assert namespace["progress"]["global_step"] == 3
+    if notebook_name.startswith("03_"):
+        assert not (remote / "batches/faster_rcnn_test/_probe_api").exists()
+        assert namespace["RESTORED_PROGRESS"] == {name: {} for name in names}
+        for epoch, name in enumerate(names, 1):
+            _snapshot(outputs[name], epoch, name)
+            folder = namespace["RUN_FOLDERS"][name]
+            drive_api.sync_checkpoint_to_drive_api(api, outputs[name], folder)
+            progress = drive_api.restore_checkpoint_from_drive_api(
+                api,
+                folder,
+                tmp_path / "restored" / name,
+                {"experiment_id": name},
+                tmp_path / "restore-cache" / name,
+            )
+            assert progress["epochs_completed"] == epoch
+        exec(compile(source, "notebook-drive-setup", "exec"), namespace)
+        assert {
+            name: progress["global_step"]
+            for name, progress in namespace["RESTORED_PROGRESS"].items()
+        } == {"photometric_augmentation": 1, "repeat_factor_sampling": 2, "input_resolution": 3}
+    else:
+        assert namespace["probe_result"]["verified"]
+        assert namespace["progress"] == {}
+        _snapshot(output, 3, "baseline_stride5")
+        namespace["persist_checkpoint"](output)
+        progress = drive_api.restore_checkpoint_from_drive_api(
+            api, namespace["run_folder"], tmp_path / "restored", config, tmp_path / "restore-cache"
+        )
+        assert progress["epochs_completed"] == 3
+        exec(compile(source, "notebook-drive-setup", "exec"), namespace)
+        assert namespace["progress"]["global_step"] == 3
 
 
+@pytest.mark.parametrize(
+    "notebook_name,archive_name",
+    [
+        ("02_faster_rcnn_experiments_kaggle.ipynb", "faster_rcnn_epoch1_project.zip"),
+        ("03_data_experiments_kaggle.ipynb", "controlled_data_submissions_project.zip"),
+    ],
+)
 def test_faster_rcnn_notebook_bootstrap_downloads_into_a_new_runtime(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, notebook_name: str, archive_name: str
 ) -> None:
     """Run the notebook bootstrap against simulated Google HTTP responses on an empty disk."""
     import ast
@@ -271,12 +319,27 @@ def test_faster_rcnn_notebook_bootstrap_downloads_into_a_new_runtime(
         "src/hm2/drive_api.py",
         "config/faster_rcnn_baseline.toml",
     )
+    if notebook_name.startswith("03_"):
+        required += (
+            "config/data_photometric_augmentation.toml",
+            "config/data_input_resolution.toml",
+            "config/yolo_baseline.toml",
+            "config/data_repeat_factor_sampling.toml",
+            "experiments/protocol.py",
+            "experiments/yolo_baseline.py",
+            "experiments/photometric_augmentation.py",
+            "experiments/input_resolution.py",
+            "experiments/repeat_factor_sampling.py",
+            "data/metadata/frames.parquet",
+            "data/metadata/objects.parquet",
+            "data/metadata/ignored_regions.parquet",
+        )
     with ZipFile(contents, "w") as archive:
         for name in required:
             archive.writestr(name, b"test source")
     payload = contents.getvalue()
     metadata = {
-        "name": "faster_rcnn_project.zip",
+        "name": archive_name,
         "id": "project",
         "size": str(len(payload)),
         "md5Checksum": hashlib.md5(payload).hexdigest(),
@@ -284,7 +347,12 @@ def test_faster_rcnn_notebook_bootstrap_downloads_into_a_new_runtime(
     http = HttpMockSequence(
         [
             ({"status": "200"}, json.dumps({"files": [{"id": "inputs", "name": "inputs"}]})),
-            ({"status": "200"}, json.dumps({"files": [metadata]})),
+            (
+                {"status": "200"},
+                json.dumps(
+                    {"files": [{"id": "old-project", "name": "faster_rcnn_project.zip"}, metadata]}
+                ),
+            ),
             ({"status": "200", "content-length": str(len(payload))}, payload),
         ]
     )
@@ -299,7 +367,7 @@ def test_faster_rcnn_notebook_bootstrap_downloads_into_a_new_runtime(
         ),
     )
     notebook = nbformat.read(
-        Path(__file__).parents[1] / "experiments/02_faster_rcnn_experiments_kaggle.ipynb",
+        Path(__file__).parents[1] / "experiments" / notebook_name,
         as_version=4,
     )
     source = notebook.cells[3].source.replace("/kaggle/temp/", str(tmp_path / "runtime") + "/")
@@ -316,3 +384,20 @@ def test_faster_rcnn_notebook_bootstrap_downloads_into_a_new_runtime(
     exec(compile(bootstrap, "notebook-bootstrap", "exec"), namespace)
     for name in required:
         assert (namespace["REPOSITORY_ROOT"] / name).read_bytes() == b"test source"
+
+
+def test_submission_csv_is_restored_with_completed_checkpoint(tmp_path: Path) -> None:
+    """Keep the exported CSV in immutable snapshots so a fresh runtime can reuse it."""
+    source, remote = tmp_path / "source", tmp_path / "remote"
+    remote.mkdir()
+    _snapshot(source, 5, "input_resolution")
+    csv = source / "faster_rcnn_input_resolution_stride5.csv"
+    csv.write_text("image_id,PredictionString\nclip_1,\n")
+    publish_snapshot(source)
+    api = LocalDrive(remote)
+    drive_api.sync_checkpoint_to_drive_api(api, source, str(remote))
+    restored = tmp_path / "restored"
+    drive_api.restore_checkpoint_from_drive_api(
+        api, str(remote), restored, {"experiment_id": "input_resolution"}, tmp_path / "cache"
+    )
+    assert (restored / csv.name).read_bytes() == csv.read_bytes()

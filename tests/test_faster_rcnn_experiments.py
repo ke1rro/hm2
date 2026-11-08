@@ -171,11 +171,8 @@ def finished_run(competition: dict, tmp_path_factory: pytest.TempPathFactory) ->
 
     drive = batch_directory / "drive"
 
-    def pause_after_first_validation(directory: Path) -> None:
+    def persist_to_drive(directory: Path) -> None:
         sync_checkpoint_to_drive(directory, drive)
-        status = json.loads((directory / "status.json").read_text())
-        if status["epochs_completed"] == 1 and not status["pending_evaluation"]:
-            (directory / "STOP").touch()
 
     arguments = (
         competition["root"],
@@ -187,7 +184,7 @@ def finished_run(competition: dict, tmp_path_factory: pytest.TempPathFactory) ->
         SETTINGS,
         "baseline_stride5",
     )
-    first = run_experiment(*arguments, on_checkpoint=pause_after_first_validation)
+    first = run_experiment(*arguments, stop_after_epoch=1, on_checkpoint=persist_to_drive)
     shutil.rmtree(output)
     restored = restore_checkpoint_from_drive(drive, output, {})
     assert restored["epochs_completed"] == 1
@@ -264,6 +261,8 @@ def test_training_pauses_resumes_and_keeps_the_final_epoch(finished_run: dict) -
     output = finished_run["output"]
     first, final = finished_run["first"], finished_run["final"]
     assert (first["epochs_completed"], first["global_step"], first["is_completed"]) == (1, 3, False)
+    assert not first["is_stopped"]
+    assert not first["pending_evaluation"]
     assert (final["epochs_completed"], final["global_step"], final["is_completed"]) == (2, 6, True)
     assert final["image_exposures"] == 12
 
