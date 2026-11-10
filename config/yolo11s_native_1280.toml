@@ -1,0 +1,69 @@
+[dataset]
+frame_stride = 4
+image_size = 1280
+jpeg_quality = 95
+should_mask_ignored = true
+ignore_fill = 114
+validation_clips = [
+    "uav0000268_05773_v",
+    "uav0000150_02310_v",
+    "uav0000361_02323_v",
+    "uav0000143_02250_v",
+    "uav0000278_00001_v",
+    "uav0000020_00406_v",
+]
+expected_train_frames = 5966
+expected_train_clips = 57
+expected_validation_frames = 3269
+expected_validation_clips = 6
+expected_test_frames = 3811
+
+[model]
+backend = "ultralytics"
+model = "yolo11s"
+model_id = "yolo11s_visdrone_det_8cls.pt"
+ultralytics_version = "8.3.235"
+
+[training]
+seed = 2026
+device = "0,1"
+batch = 16
+workers = 4
+budget_hours = 5.0
+max_epochs = 30
+min_epochs = 8
+validation_time_margin = 1.25
+optimizer = "SGD"
+lr0 = 0.002
+lrf = 0.1
+momentum = 0.937
+weight_decay = 0.0005
+warmup_epochs = 1.0
+warmup_bias_lr = 0.0
+cos_lr = false
+close_mosaic = 5
+patience = 10
+amp = true
+deterministic = true
+mosaic = 1.0
+mixup = 0.0
+copy_paste = 0.0
+scale = 0.3
+translate = 0.1
+degrees = 0.0
+shear = 0.0
+perspective = 0.0
+fliplr = 0.5
+flipud = 0.0
+hsv_h = 0.015
+hsv_s = 0.7
+hsv_v = 0.4
+smoke_fraction = 0.2
+
+[inference]
+image_sizes = [1280]
+confidence = 0.001
+iou = 0.7
+max_detections = 500
+batch = 16
+half = true

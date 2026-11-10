@@ -59,3 +59,69 @@ The checkpoint is epoch 5, selected as the configured final epoch. Training used
 [results notebook](../notebooks/04_faster_rcnn_results.ipynb) reads the downloaded
 records under `runs/faster_rcnn/faster_rcnn_stride5_5epochs_seed2026/`. These records,
 weights and CSVs are gitignored; original records remain on Drive.
+
+### Epoch-one replication
+
+`faster_rcnn_baseline_stride5_epoch1.csv` contains predictions from the separate
+`faster_rcnn_stride5_epoch1_recovery_seed2026` run, paused after the first epoch
+and full validation. We retain the original five-epoch learning-rate schedule,
+batch size 2, seed 2026 and every-fifth-frame training selection. This is a new
+replication, not the deleted epoch-one checkpoint from the original run.
+
+The new checkpoint has 2,433 optimizer updates and 14.48 minutes of training.
+Full validation on 2,846 images gives COCO mAP 0.194534, AP50 0.410924 and
+AP small 0.086361 at maxDets 100. Its Kaggle score has not been measured.
+
+We restored the CSV from the
+[verified Drive summary generation](https://drive.google.com/drive/folders/1-j0PGOrdLlnhk5c5FQWqCT2YmMcLWPyc).
+It covers all 3,811 test images in `test_images.csv` order, with 377,822 detections,
+at most 206 per image and no empty predictions. Image membership, classes,
+scores and original-image coordinate bounds were validated. The official sample
+was unavailable locally, so `official_sample_verified` remains false.
+
+The CSV SHA256 is
+`3afc51092471eb50e4cbb3064580dd94d86a2ab8f353defc9cca26443f2343d7`.
+The immutable summary manifest and checkpoint pointer agree on the export
+metadata and epoch-one records. Source JSON and weights remain on Drive.
+
+## YOLO11s
+
+`yolo_baseline_stride5.csv` contains the completed YOLO11s baseline's final epoch-five
+predictions. This epoch also has the highest validation mAP in the five-epoch run:
+mAP 0.154990, AP50 0.297651 and AP small 0.092178 at maxDets 100. Training used the
+same 4,868 stride-five frames and took 23.71 minutes, excluding validation and transfers.
+
+We restored the checkpoint from verified Drive generation `1794081756651770183` and
+ran test inference locally on MPS in FP32, using the saved resize, NMS and confidence
+settings. The CSV covers all 3,811 test images in `test_images.csv` order, with 256,500
+detections, at most 216 per image and no empty rows. Class IDs, scores and original-image
+pixel bounds were validated. The official sample was unavailable locally, so
+`official_sample_verified` remains false. The user submitted this CSV and reported
+Kaggle Public **0.14348**, visible in the 7 November 2026 submissions screenshot.
+This is below the Faster R-CNN final-epoch Public reference of 0.20369; the cause
+has not been established.
+
+The [CSV](https://drive.google.com/file/d/1vsPmYGTtLBT14FEkj3ah_vICpr3qt87V/view)
+and [export metadata](https://drive.google.com/file/d/1HlYixXJ9ZqpooNG5mI-T-uXW8OhGpbn5/view)
+are stored in the existing YOLO experiment folder on Drive. The CSV SHA256 is
+`4380b7c2c989e72f49529f6d07dae4582b7b7e8c9648da91c685c51ba3f08397`.
+
+## Faster R-CNN data experiments
+
+We downloaded all three completed Kaggle CUDA/AMP exports from their verified Drive
+generations. Each CSV uses the final fifth-epoch checkpoint and covers all 3,811 test
+images in test_images.csv order, with no empty predictions. We verified checkpoint and
+CSV SHA256 identities, class IDs 0–7, confidence values, original-pixel box bounds and
+the 500-detection limit. The official sample was unavailable; metadata records validation
+against test_images.csv. No competition submission was sent during download.
+
+| Experiment               | CSV                                                | Detections | Maximum per image | Drive CSV                                                                      |
+| ------------------------ | -------------------------------------------------- | ---------: | ----------------: | ------------------------------------------------------------------------------ |
+| Photometric augmentation | `faster_rcnn_photometric_augmentation_stride5.csv` |     291999 |               147 | [File](https://drive.google.com/file/d/1oFh9w80g_t6JAm0-5mr6EzObT-S3ji58/view) |
+| Repeat factor sampling   | `faster_rcnn_repeat_factor_sampling_stride5.csv`   |     287076 |               144 | [File](https://drive.google.com/file/d/1d9ctinCKY50jX81SPgE-R3Fu8JoUYunk/view) |
+| Higher resolution        | `faster_rcnn_input_resolution_stride5.csv`         |     291863 |               157 | [File](https://drive.google.com/file/d/1BZNjWZ24JnLpW74zVmboTBCR4GgnsIQR/view) |
+
+The corresponding immutable generations are `1794131500682713072`,
+`1794131823144531125` and `1794132219893485612`. Checkpoint hashes and inference timing
+remain in each generation's submission_metadata.json on Drive. Temporary downloaded
+records were removed after verification; local CSVs remain gitignored.
