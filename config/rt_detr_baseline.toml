@@ -80,6 +80,3 @@ num_queries = 500
 
 [experiments.denoising_300.model]
 num_denoising = 300
-
-[experiments.shared_lr.training]
-backbone_learning_rate = 0.0001
