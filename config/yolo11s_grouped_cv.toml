@@ -1,0 +1,66 @@
+base_config = "yolo11s_native_1280.toml"
+det_frame_index = "visdrone_det_frame_index.json"
+
+[dataset]
+validation_clips = []
+expected_train_frames = 6786
+expected_train_clips = 63
+expected_validation_frames = 0
+expected_validation_clips = 0
+
+[cross_validation]
+folds = 4
+epochs = 2
+evaluation_frame_stride = 2
+native_validation_frames = 16
+
+[recipes.control]
+description = "Notebook 10 recipe, lr0 0.002"
+seeds = [2026]
+training = {}
+
+[recipes.low_learning_rate]
+description = "Notebook 11 low learning rate, lr0 0.0005"
+seeds = [2026, 2027, 2028]
+training = { lr0 = 0.0005 }
+
+[candidates]
+control = "control_seed2026_epoch1"
+interpolation_source = "control_seed2026_epoch1"
+interpolation_alphas = [0.25, 0.5, 0.75]
+soup_recipe = "low_learning_rate"
+soup_epoch = 1
+primary = [
+    "low_learning_rate_seed2026_epoch1",
+    "interpolation_alpha0.5",
+    "low_learning_rate_soup_epoch1",
+]
+
+[inference_variants.multi_label]
+description = "Multi-label NMS: every class above the confidence threshold may keep a box"
+inference = { multi_label = true }
+
+[inference_variants.test_time_augmentation]
+description = "Ultralytics flip and multi-scale test-time augmentation"
+inference = { augment = true }
+
+[inference_variants.multi_label_tta]
+description = "Multi-label NMS with test-time augmentation"
+inference = { multi_label = true, augment = true }
+
+[inference_checks]
+checkpoints = [
+    "control_seed2026_epoch1",
+    "low_learning_rate_seed2026_epoch1",
+    "low_learning_rate_soup_epoch1",
+]
+degraded_long_sides = [680, 960]
+stress_variants = ["test_time_augmentation"]
+
+[decision]
+min_improved_share = 0.67
+max_p_value = 0.1
+max_group_loss = 0.02
+subset_fraction = 0.3
+subset_draws = 10000
+seed = 2026
