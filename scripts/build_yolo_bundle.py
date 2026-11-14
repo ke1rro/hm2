@@ -11,7 +11,12 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 LOGGER = logging.getLogger(__name__)
 BUNDLE_NAME = "yolo_native_project.zip"
-CONFIG_NAMES = ("config/yolo11s_native_1280.toml", "config/yolo11s_native_experiments.toml")
+CONFIG_NAMES = (
+    "config/yolo11s_native_1280.toml",
+    "config/yolo11s_native_experiments.toml",
+    "config/yolo11s_grouped_cv.toml",
+    "config/visdrone_det_frame_index.json",
+)
 BASELINE_NAME = "yolo11s_native_1280_best.pt"
 BASELINE_SHA256 = "d821492586b4238ad9dea6bb1a95120652346e5573e8d9a08000b8dc2f74cb84"
 VISDRONE_URL = (
@@ -23,9 +28,11 @@ VISDRONE_CHANNELS = (0, 2, 3, 4, 5, 6, 8, 9)
 INIT_NAME = "yolo11s_visdrone_det_8cls.pt"
 NOTEBOOK_IMPORTS = (
     "hm2.data",
+    "hm2.detection_data",
     "hm2.drive_api",
     "hm2.experiment_checkpoint",
     "hm2.faster_rcnn_experiments",
+    "hm2.grouped_validation",
     "hm2.visualization",
     "hm2.yolo_data",
     "hm2.yolo_pipeline",

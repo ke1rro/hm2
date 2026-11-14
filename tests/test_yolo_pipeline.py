@@ -22,10 +22,13 @@ from hm2.yolo_data import (
 from hm2.yolo_pipeline import (
     PASSTHROUGH_TRAINING_KEYS,
     CheckpointMirror,
+    MultiLabelDetectionPredictor,
     apply_experiment,
+    average_checkpoints,
     build_yolo_submission,
     classify_ground_truth_outcomes,
     coco_detections,
+    epoch_checkpoints,
     load_pipeline_settings,
     plan_epochs,
     predict_frames,
@@ -466,3 +469,97 @@ def test_coco_subset_merges_splits_with_crowds_and_aligned_ids(
     ]
     metrics = evaluate_coco_max_dets(destination, predictions, image_ids, 100, "faster_coco_eval")
     assert metrics["map"] == pytest.approx(1.0)
+
+
+def test_predictions_can_use_multi_label_nms_and_a_degraded_source(dataset_root: Path) -> None:
+    test = pl.read_csv(dataset_root / "test_images.csv")
+    pattern = ((np.indices((HEIGHT, WIDTH)) // 8).sum(axis=0) % 2 * 255).astype(np.uint8)
+    for row in test.iter_rows(named=True):
+        path = dataset_root / row["file_name"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(path), np.repeat(pattern[..., None], 3, axis=2))
+    frames = test.rename(
+        {"file_name": "relative_path", "width": "image_width", "height": "image_height"}
+    )
+    inference = {**_settings()["inference"], "batch": 1}
+    sharp, degraded = _RecordingDetector(), _RecordingDetector()
+    predict_frames(sharp, frames, dataset_root, 200, inference, "cpu")
+    degraded_settings = {**inference, "multi_label": True, "degraded_long_side": 40}
+    predictions = predict_frames(degraded, frames, dataset_root, 200, degraded_settings, "cpu")
+    assert sharp.predictors == [None] * frames.height
+    assert degraded.predictors == [MultiLabelDetectionPredictor] * frames.height
+    assert all(max(image.shape[:2]) == 200 for image in degraded.images)
+    assert all(
+        blurred.std() < original.std()
+        for blurred, original in zip(degraded.images, sharp.images, strict=True)
+    )
+    width = frames["image_width"][0]
+    assert predictions[0]["boxes"][0, 2] == pytest.approx(0.5 * width)
+
+
+class _RecordingDetector(_FakeDetector):
+    def __init__(self) -> None:
+        super().__init__()
+        self.images: list[np.ndarray] = []
+        self.predictors: list[object] = []
+
+    def predict(self, source: list[np.ndarray], **options: object) -> list[SimpleNamespace]:
+        self.images.extend(source)
+        self.predictors.extend([options["predictor"]] * len(source))
+        return super().predict(source, **options)
+
+
+def test_multi_label_predictor_may_keep_several_classes_per_box(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ultralytics.models.yolo.detect import DetectionPredictor
+
+    predictions = torch.zeros(1, 4 + 3, 2)
+    predictions[0, :4, 0] = torch.tensor([20.0, 20.0, 8.0, 8.0])
+    predictions[0, 4:, 0] = torch.tensor([0.9, 0.6, 0.05])
+    predictions[0, :4, 1] = torch.tensor([60.0, 60.0, 8.0, 8.0])
+    predictions[0, 4:, 1] = torch.tensor([0.2, 0.0, 0.0])
+    outputs = {}
+    for name, predictor_class in (
+        ("single", DetectionPredictor),
+        ("multi", MultiLabelDetectionPredictor),
+    ):
+        predictor = predictor_class(overrides={"conf": 0.1, "iou": 0.7, "max_det": 10})
+        monkeypatch.setattr(predictor, "construct_results", lambda detections, *_: detections)
+        outputs[name] = predictor.postprocess(predictions, None, [np.zeros((80, 80, 3))])[0]
+    torch.testing.assert_close(outputs["single"][:, 4:], torch.tensor([[0.9, 0.0], [0.2, 0.0]]))
+    order = outputs["multi"][:, 4].argsort()
+    torch.testing.assert_close(
+        outputs["multi"][order, 4:], torch.tensor([[0.2, 0.0], [0.6, 1.0], [0.9, 0.0]])
+    )
+
+
+def test_weight_average_interpolates_every_floating_tensor(tmp_path: Path) -> None:
+    paths = []
+    for seed in (1, 2):
+        torch.manual_seed(seed)
+        network = DetectionModel("yolo11n.yaml", nc=len(CLASS_NAMES), verbose=False)
+        for parameter in network.parameters():
+            parameter.data.normal_()
+        paths.append(tmp_path / f"source{seed}.pt")
+        torch.save({"model": network.half(), "epoch": 0}, paths[-1])
+    destination = tmp_path / "average.pt"
+    provenance = average_checkpoints(paths, [0.25, 0.75], destination)
+    states = [
+        torch.load(path, map_location="cpu", weights_only=False)["model"].float().state_dict()
+        for path in [*paths, destination]
+    ]
+    first, second, average = states
+    for name, value in average.items():
+        if value.is_floating_point():
+            expected = 0.25 * first[name] + 0.75 * second[name]
+            torch.testing.assert_close(value, expected, rtol=2e-3, atol=2e-3)
+        else:
+            assert torch.equal(value, first[name])
+    assert [source["weight"] for source in provenance["sources"]] == [0.25, 0.75]
+
+
+def test_epoch_checkpoints_count_completed_epochs(tmp_path: Path) -> None:
+    for name in ("epoch0.pt", "epoch1.pt", "last.pt", "best.pt"):
+        (tmp_path / name).touch()
+    assert epoch_checkpoints(tmp_path) == {1: tmp_path / "epoch0.pt", 2: tmp_path / "epoch1.pt"}

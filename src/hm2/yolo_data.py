@@ -288,6 +288,34 @@ def write_data_yaml(output_root: Path) -> Path:
     return path
 
 
+def write_image_list_yaml(
+    directory: Path, train_images: list[Path], validation_images: list[Path]
+) -> Path:
+    """Write an Ultralytics dataset description that reads its splits from image lists.
+
+    Ultralytics finds each label file by replacing images with labels in the image path, so
+    the listed images must come from a dataset written by prepare_yolo_dataset.
+
+    Args:
+        directory: Destination of train.txt, val.txt and data.yaml.
+        train_images: Prepared training images.
+        validation_images: Prepared images for the native per-epoch validation.
+
+    Returns:
+        Path to the written data.yaml file.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, images in (("train", train_images), ("val", validation_images)):
+        (directory / f"{name}.txt").write_text("".join(f"{path}\n" for path in images))
+    names = "\n".join(f"  {index}: {name}" for index, name in enumerate(CLASS_NAMES))
+    path = directory / "data.yaml"
+    path.write_text(
+        f"path: {directory}\ntrain: {directory / 'train.txt'}\n"
+        f"val: {directory / 'val.txt'}\nnames:\n{names}\n"
+    )
+    return path
+
+
 def prepare_yolo_dataset(
     source_root: Path,
     output_root: Path,
@@ -440,7 +468,7 @@ def verify_yolo_dataset(
                 (f"{split}: readable images", len(images), readable),
                 (
                     f"{split}: image long sides",
-                    [dataset_settings["image_size"]],
+                    [dataset_settings["image_size"]] if images else [],
                     sorted(long_sides),
                 ),
                 (f"{split}: boxes per class match COCO", reference.tolist(), class_counts.tolist()),
