@@ -1,0 +1,31 @@
+base_config = "yolo11s_native_1280.toml"
+baseline_checkpoint = "yolo11s_native_1280_best.pt"
+
+[experiments.low_learning_rate]
+description = "Initial learning rate 0.0005 instead of 0.002"
+training = { lr0 = 0.0005, max_epochs = 8, patience = 3 }
+
+[experiments.frozen_backbone]
+description = "Backbone layers 0 to 9 frozen"
+training = { freeze = 10, max_epochs = 8, patience = 3 }
+
+[experiments.classification_loss_gain]
+description = "Classification loss gain 1.0 instead of 0.5"
+training = { cls = 1.0, max_epochs = 8, patience = 3 }
+
+[experiments.stride2_frames]
+description = "Every second training frame instead of every fourth"
+dataset = { frame_stride = 2, expected_train_frames = 11903 }
+training = { max_epochs = 8, patience = 3 }
+
+[inference_experiments.image_size_1536]
+description = "Input long side 1536 instead of 1280"
+inference = { image_sizes = [1536] }
+
+[inference_experiments.test_time_augmentation]
+description = "Ultralytics flip and multi-scale test-time augmentation"
+inference = { augment = true }
+
+[inference_experiments.confidence_005]
+description = "Confidence threshold 0.05 instead of 0.001"
+inference = { confidence = 0.05 }

@@ -199,7 +199,37 @@ the zero-shot CSV). Longer fine-tuning lowered clean-fold mAP, consistent with f
 the scene diversity of VisDrone-DET. The clean fold and the Public leaderboard moved in
 the same direction, unlike the official validation split in the earlier Faster R-CNN
 ablations. A lower learning rate or a frozen backbone for a few epochs would test the
-forgetting explanation; we have not run it.
+forgetting explanation. Notebook 11 runs these tests.
+
+## 8. Tuning experiments
+
+`notebooks/11_yolo11s_tuning_experiments.ipynb` changes one factor of the recipe per run.
+The runs are defined in `config/yolo11s_native_experiments.toml`:
+
+| Experiment                 | Change                                      | Motivation                                   |
+| -------------------------- | ------------------------------------------- | -------------------------------------------- |
+| `low_learning_rate`        | `lr0` 0.0005 instead of 0.002               | validation peaked at epoch 1 (forgetting)    |
+| `frozen_backbone`          | layers 0 to 9 frozen                        | keep the VisDrone-DET features               |
+| `classification_loss_gain` | `cls` 1.0 instead of 0.5                    | van, truck and bicycle confusions            |
+| `stride2_frames`           | every second training frame (11,903 frames) | more distinct views for missed small objects |
+
+Every run starts from the converted VisDrone-DET checkpoint and trains for at most 8 epochs
+with patience 3. Ultralytics warms up towards the same initial learning rate during the
+first epoch for any epoch count, so the submitted epoch-1 checkpoint is the reference. It
+is evaluated again in the same session. Three inference settings are then evaluated on the
+best checkpoint without retraining: a 1536-pixel input, test-time augmentation and a
+confidence threshold of 0.05.
+
+To run it on Kaggle, follow Section 6 with notebook 11 instead of notebook 10. Select
+**GPU T4 x2**. On a single GPU the notebook trains on device 0 with batch 8. That keeps
+8 images per GPU, and Ultralytics accumulates gradients to the same nominal batch of 64,
+but training takes about twice as long: at most about 6.6 h. Set
+`SHOULD_TRAIN = True` and start **Save & Run All**. Training takes at most about 3.5 h,
+plus about one hour for data preparation, evaluation and export. Each experiment writes
+`/kaggle/working/submissions/yolo11s_<experiment>.csv` with a metadata file that holds its
+clean-fold mAP. If a combination of checkpoint and inference setting beats every exported
+file, it is also written as `yolo11s_tuned_final.csv`. With Drive enabled, finished
+experiments are skipped on a rerun and an interrupted one resumes.
 
 ## Sources
 
