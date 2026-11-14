@@ -72,7 +72,8 @@ The first stage hands the second stage a fixed number of boxes per image after N
 
 More proposals do not help: from 300 to 2000 mAP changes by 0.001 and AP small not at all, and inference gets slower. So the weak result on tiny objects (AP small 0.081) does not come from the second stage running out of candidates. The limit is more likely the first stage, its anchors and feature map resolution.
 
-<!-- TODO (after Kaggle run): positive_fraction_0_5. Write 3 sentences: the second change is the share of positive boxes among the 512 boxes the second stage trains on per image, raised from 0.25 to 0.5 (tiny objects are rare, so positives are few). Give val mAP, AP small and per-class changes from runs/.../positive_fraction_0_5, compare with the baseline 0.175 and 0.081, and say whether it helped. Then add its row to the appendix table and delete this comment. -->
+**Share of positive boxes.** \
+The second stage trains on 512 boxes per image, and only 25 percent of them were positive. Tiny objects are rare, so we raised the share to 50 percent and kept everything else. Validation mAP hardly changed (0.177 against 0.175), AP small was a little lower (0.077 against 0.081), and bus improved most (0.039 against 0.015). The Public score rose from 0.204 to 0.213, the best of all our Faster R-CNN runs at the shared image size. With one seed and 14 test clips, a gain of 0.009 may be noise, so we do not claim that more positives is better. The score still falls after epoch 1 (0.200 after epoch 1, 0.177 after epoch 5), as in the baseline.
 
 ### Data experiments
 
