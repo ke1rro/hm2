@@ -13,22 +13,20 @@ We trained four detector families under the same budget: two-stage (Faster R-CNN
 anchors (RetinaNet), one-stage without anchors (YOLO11s) and query-based (RT-DETRv2). With this equal
 training, RT-DETRv2 was the most accurate.
 
-The final pipeline builds on these experiments. Objects are tiny, so it uses larger images (1280 pixels). For the final model we chose YOLO11s and used a stronger recipe, started from weights of a public model trained on a similar drone dataset, VisDrone-DET (external data). The final model reaches Public score 0.362.
+The final pipeline builds on these experiments. Objects are tiny, so it uses larger images (1280 pixels). For the final model we chose YOLO11s and used a stronger recipe, started from weights of a public model trained on a similar drone dataset, VisDrone-DET (external data). We selected two final submissions, which reach Public scores of 0.359 and 0.362.
 ## EDA (Exploratory Data Analysis)
 
 During the EDA phase, our goal was to understand the dataset and make sure that nothing in it would silently invalidate training or evaluation.
 
 Remark about coordinate systems:
 
-The dataset uses three conventions.
+The dataset uses three conventions, and a conversion error still produces a valid file that scores near zero.
 
-This could cause issues, as a conversion error still produces a valid file that scores near zero.
+YOLO labels store the normalized box center and size, with class IDs 0 to 7.
 
-YOLO labels store the box center and size normalized to the image width and height, with class IDs 0 to 7.
+COCO annotations store the top-left corner and size in pixels, with category IDs 1 to 8.
 
-COCO annotations store the top-left corner and size in the original pixels, with category IDs 1 to 8.
-
-The submission expects the COCO layout in original pixels but the YOLO class IDs. We convert with $x = (c_x - w/2) W$, $y = (c_y - h/2) H$, width $w W$, height $h H$ and class = category - 1. Ignored regions use the YOLO layout without a class. Our final model sees a frame resized so that its longer side is 1280 px.
+The submission uses the COCO layout with YOLO class IDs, so we convert with $x = (c_x - w/2) W$, $y = (c_y - h/2) H$, width $w W$, height $h H$ and class = category - 1.
 
 
 ### EDA Findings
@@ -37,15 +35,13 @@ Object size: 24.4% of the boxes are COCO small (by COCO convention, below 32x32 
 
 The relevant size is the one after resizing, however. With a 1024 px long side, as in our first detectors, the median box side is 24 px ([02_retinanet, Section 4](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/02_retinanet.ipynb#4.-Smaller-anchor-scales)). With a 1280 px long side, the median is 30 px and 9.5% are below 16 px ([10_yolo11s_native_pipeline, Section 4](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/10_yolo11s_native_pipeline.ipynb#4.-Sampling-summary-and-annotation-checks)). The final model therefore uses 1280 px.
 
-Density: A training frame contains 45.7 objects on average, with a median of 43, a 99th percentile of 142 and a maximum of 180 ([01_eda, Section 5](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/01_eda.ipynb#5.-Objects-per-frame)). We use a confidence threshold of 0.001 and up to 500 detections per frame. Raising the threshold to 0.05 lowered mAP by 0.39 points ([11_yolo11s_tuning_experiments, Section 6](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/11_yolo11s_tuning_experiments.ipynb#6.-Inference-strategies-on-the-best-checkpoint)).
+Density: A training frame contains 45.7 objects on average, with a median of 43, a 99th percentile of 142 and a maximum of 180 ([01_eda, Section 5](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/01_eda.ipynb#5.-Objects-per-frame)). Raising the confidence threshold from 0.001 to 0.05 lowered mAP by 0.39 points ([11_yolo11s_tuning_experiments, Section 6](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/11_yolo11s_tuning_experiments.ipynb#6.-Inference-strategies-on-the-best-checkpoint)).
 
 Class imbalance: Car accounts for 44.0% of the boxes, person 31.1% and bus for 0.8% ([01_eda, Section 3](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/01_eda.ipynb#3.-Class-distribution)).
 
-On the clean validation fold, AP follows object size more than frequency: bus reaches 0.66 and bicycle 0.13 ([10_yolo11s_native_pipeline, Section 10](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/10_yolo11s_native_pipeline.ipynb#10.-Per-class,-size-and-clip-results)). Repeat-factor sampling did not give a consistent gain ([09_repeat_factor_sampling, Section 7](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/09_repeat_factor_sampling.ipynb#7.-Interpretation-and-limitations)). The failure analysis shows that among predictions with score at least 0.3, 24 to 29% of van, truck and bicycle objects are assigned to another class ([10_yolo11s_native_pipeline, Section 11](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/10_yolo11s_native_pipeline.ipynb#11.-Failure-analysis)).
+On the clean validation fold, AP follows object size more than frequency: bus reaches 0.66 and bicycle 0.13 ([10_yolo11s_native_pipeline, Section 10](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/10_yolo11s_native_pipeline.ipynb#10.-Per-class,-size-and-clip-results)). The failure analysis shows that among predictions with score at least 0.3, 24 to 29% of van, truck and bicycle objects are assigned to another class ([10_yolo11s_native_pipeline, Section 11](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/10_yolo11s_native_pipeline.ipynb#11.-Failure-analysis)).
 
-Train and test: labeled frames are 1344 to 3840 px wide, while test frames are 680 to 1920 px ([01_eda, Section 6](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/01_eda.ipynb#6.-Resolution-and-split-differences)).
-
-Independence: the same object keeps a median IoU of 0.90 between neighboring frames ([10_yolo11s_native_pipeline, Section 4](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/10_yolo11s_native_pipeline.ipynb#4.-Sampling-summary-and-annotation-checks)), so every split keeps whole clips and the final validation is grouped by video ([12_yolo11s_grouped_cv, Section 2](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/12_yolo11s_grouped_cv.ipynb#2.-Validation-pool-and-folds)).
+Independence: the same object keeps a median IoU of 0.90 between neighboring frames ([10_yolo11s_native_pipeline, Section 4](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/10_yolo11s_native_pipeline.ipynb#4.-Sampling-summary-and-annotation-checks)), so every split keeps whole clips.
 
 ## Evaluation
 
@@ -54,38 +50,26 @@ Their first runs used the same setup:
 
 4,868 training frames (every 5th frame of 56 clips), 2,846 validation frames from 7 other clips, images resized to a shorter side of 640 and a longer side of at most 1024 pixels, 5 epochs, 2 images per update, seed 2026, left-right flip with probability 0.5.
 
-All four start from COCO-pretrained weights, and Faster R-CNN, RetinaNet and RT-DETRv2 share a ResNet-50 backbone, so their differences come mainly from the detection head and the way predictions are assigned to objects, not from feature extraction.
-
-The later YOLO11s pipeline starts instead from weights trained on VisDrone-DET, so its gain over these runs comes from initialization and data, not from the architecture alone.
+All four start from COCO-pretrained weights, and Faster R-CNN, RetinaNet and RT-DETRv2 share a ResNet-50 backbone, so their differences come mainly from the detection head.
 
 Our metrics for a predicted box $B_p$ and a ground-truth box $B_g$,
 
 $$\mathrm{IoU}(B_p, B_g) = \frac{|B_p \cap B_g|}{|B_p \cup B_g|}.$$
 
-For one class and one IoU threshold $t$, predictions are sorted by score and matched greedily: a prediction is a true positive if it has the same class and $\mathrm{IoU} \ge t$ with a ground-truth box that is not matched yet, and a false positive otherwise. Walking down the sorted list gives precision $P = TP/(TP + FP)$ and recall $R = TP/N_{gt}$. COCO averages the interpolated precision $P_{\mathrm{interp}}(r) = \max_{r' \ge r} P(r')$ at 101 recall levels:
-
-$$\mathrm{AP}_{c,t} = \frac{1}{101} \sum_{r \in \{0, 0.01, \dots, 1\}} P_{\mathrm{interp}}(r).$$
-
-The main score averages this over the 8 classes and the 10 thresholds $T = \{0.50, 0.55, \dots, 0.95\}$:
-
-$$\mathrm{mAP} = \frac{1}{8 \cdot 10} \sum_{c} \sum_{t \in T} \mathrm{AP}_{c,t}.$$
+A prediction is a true positive if it has the same class and $\mathrm{IoU} \ge t$ with a ground-truth box that is not matched yet. AP is the area under the precision-recall curve of one class, and the main score, mAP, averages it over the 8 classes and the IoU thresholds $t = 0.50, 0.55, \dots, 0.95$.
 
 AP50 uses only $t = 0.5$, and AP small counts only ground-truth boxes with an area below $32^2$ $\mathrm{px}^2$ in the original image. At most 100 detections per image and class are kept. Ignored regions enter as COCO crowd regions: a detection that falls inside one, measured as the share of the detection covered by the region, is removed instead of counted as a false positive. The Kaggle metric is not published, so this COCO mAP is our proxy, and the Public leaderboard (about 14 test clips) is a second, noisy measurement.
 
 ## Two-stage anchor-based: Faster R-CNN
-
-Faster R-CNN works in two stages.
-
-1. The region proposal network (RPN) decides where to look: it suggests boxes that may contain an object, starting from anchors, which are boxes of fixed size and shape placed all over the image.
-2. The second stage decides what is there: it classifies each suggestion and corrects its box. Non-maximum suppression (NMS) then keeps the best of the overlapping boxes for one object.
 
 We start from a model pretrained on COCO with a ResNet-50 backbone and train it with SGD at learning rate 0.0025. Our change is in the loss: a background candidate that is more than half covered by an ignore region is removed from the loss of both stages, so finding a real object there is not punished.
 
 ![Ignore regions (pink) on a training frame](images/ignore_regions.png)
 
 On validation, Faster R-CNN reaches mAP 0.175, AP50 0.354 and AP small 0.081, and needs 94 ms per frame.
+
 **Failure cases** \
-The figure shows the worst validation frames, not typical ones. At night, all 5 objects below 16 pixels are missed, probably because they are tiny and dark, so the first stage does not propose them. Both buses are missed (one gets a truck box), and buses are only 0.8 percent of all boxes. In a crowd, 21 of 25 motorcycles are missed although many riders are found, probably because a small motorcycle overlaps its rider. The score also falls during training (0.192 after epoch 1, 0.175 after epoch 5), possibly from overfitting.
+The figure shows the worst validation frames: at night all 5 objects below 16 pixels are missed, both buses are missed (one gets a truck box), and in a crowd 21 of 25 motorcycles are missed although many riders are found. The score also falls during training (0.192 after epoch 1, 0.175 after epoch 5), possibly from overfitting.
 
 ![Faster R-CNN failure cases: ground truth with missed objects in red (left), predictions with score 0.3 or more (right)](images/failure_cases.png)
 Figure was made in a Kaggle notebook from the validation predictions of the last epoch (val_predictions.json)
@@ -93,24 +77,14 @@ Figure was made in a Kaggle notebook from the validation predictions of the last
 ### Tuning the two-stage detector
 
 **Number of region proposals.** \
-The first stage hands the second stage a fixed number of boxes per image after NMS. On the finished baseline we changed only this number at inference, with the same weights.
-
-| Proposals per image | Val mAP | AP small | AP large | Public |
-| ------------------- | ------- | -------- | -------- | ------ |
-| 300                 | 0.1735  | 0.0807   | 0.331    | 0.201  |
-| 1000 (baseline)     | 0.1747  | 0.0807   | 0.334    | 0.204  |
-| 2000                | 0.1747  | 0.0806   | 0.334    | 0.204  |
-
-More proposals do not help: from 300 to 2000 mAP changes by 0.001 and AP small not at all, and inference gets slower. So the weak result on tiny objects (AP small 0.081) does not come from the second stage running out of candidates. The limit is more likely the first stage, its anchors and feature map resolution.
+On the finished baseline we changed only the number of proposals per image at inference (300, 1000 and 2000). More proposals do not help: mAP changes by 0.001 and AP small not at all, so the weak result on tiny objects (AP small 0.081) more likely comes from the first stage, its anchors and feature map resolution.
 
 **Share of positive boxes.** \
-The second stage trains on 512 boxes per image, and only 25 percent of them were positive. Tiny objects are rare, so we raised the share to 50 percent and kept everything else. Validation mAP hardly changed (0.177 against 0.175), AP small was a little lower (0.077 against 0.081), and bus improved most (0.039 against 0.015). The Public score rose from 0.204 to 0.213, the best of all our Faster R-CNN runs at the shared image size. With one seed and 14 test clips, a gain of 0.009 may be noise, so we do not claim that more positives is better. The score still falls after epoch 1 (0.200 after epoch 1, 0.177 after epoch 5), as in the baseline.
+The second stage trains on 512 boxes per image, of which only 25 percent were positive, so we raised the share to 50 percent: validation mAP hardly changed (0.177 against 0.175), bus improved most (0.039 against 0.015) and Public rose from 0.204 to 0.213, the best of our Faster R-CNN runs. With one seed and 14 test clips this gain may be noise, and the score still falls after epoch 1 (0.200 after epoch 1, 0.177 after epoch 5).
 
 ### Data experiments
 
-Will describe very shortly, as they do not provide too much gain.
-
-On the Faster R-CNN baseline we changed one data setting at a time.
+On the Faster R-CNN baseline we tested three data changes, one at a time: color jitter for the lighting differences between videos, a larger input for small objects, and repeat-factor sampling, which shows images with rare classes more often.
 
 | Change | Val mAP | AP small | Public |
 | --- | ---: | ---: | ---: |
@@ -119,7 +93,7 @@ On the Faster R-CNN baseline we changed one data setting at a time.
 | Input 800/1280 instead of 640/1024 ([07, Section 7](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/07_input_resolution.ipynb#7.-Interpretation-and-limitations)) | 0.209 | 0.103 | 0.194 |
 | Repeat-factor sampling of rare classes ([09, Section 7](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/09_repeat_factor_sampling.ipynb#7.-Interpretation-and-limitations)) | 0.182 | 0.086 | 0.196 |
 
-All three raised validation mAP and lowered the Public score, so we adopted none of them. Only the larger input gave a clear validation gain, mostly on small objects, which later led us to train the final model at 1280 px.
+All three raised validation mAP but lowered Public, so none was adopted. The larger input gave the clearest gain, mostly on small objects, which led us to train the final model at 1280 px.
 
 ## One-stage anchor-based: RetinaNet
 
@@ -132,15 +106,15 @@ We fine-tuned the COCO-pretrained RetinaNet ResNet-50 FPN V2 and ran four experi
 | standard | all       | epoch 1    | 0.158 | 0.299 |    0.053 |    0.327 |  0.168 |
 | halved   | all       | epoch 4    | 0.159 | 0.333 |    0.058 |    0.306 |  0.160 |
 
-The initial frame size is up to 3840x2160 px, and our setup used batch size 2 and 5 epochs. Full size frames would not fit into our Tesla T4 budget, so we resized the shorter side to 640 px and the longer side to at most 1024 px (1024x576 for our frames).
+To fit batch size 2 and 5 epochs into the T4 budget, frames of up to 3840x2160 px were resized to 1024x576.
 
 The smallest standard anchor is 32 px, so a 13 px box (the 10th percentile) reaches an IoU of at most $13^2/32^2 \approx 0.17$ with it and is never a regular positive.
 
 Halved anchors start at 16 px (IoU up to 0.66). They raised AP50 in both data settings (+2.5 and +3.9 points at epoch 5), so more small objects are found. AP small barely moved (-0.1 and +0.5 points), however, and AP large fell (-4.0 and -1.7 points). The clearest loser is bus, the largest class: its AP fell from 0.038 to 0.009 with every fifth frame and from 0.087 to 0.013 with all frames ([03_retinanet_results, Section 5](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/03_retinanet_results.ipynb#5.-Class-AP-at-epoch-5)). Smaller anchors trade large objects for coarse detection of small ones, while precise localization of small objects stays limited by the resolution of the input.
 
-Just to prove that full dataset does not necessarily lead to better performance, training on all frames gave five times more updates but no consistent gain (-0.2 and +0.8 points mAP at epoch 5). That is why we stayed on using stride values in our experiments.
+Training on all frames gave five times more updates but no consistent gain (-0.2 and +0.8 points mAP at epoch 5), so we kept a frame stride in later experiments.
 
-Comparison with Faster R-CNN. Under the same budget RetinaNet with standard anchors reached 0.153 mAP and 0.053 AP small, against 0.175 and 0.081 for Faster R-CNN, and 0.160 against 0.204 on Public. The comparison is not purely about the architecture: stock RetinaNet treats ignored regions as background, while our Faster R-CNN excludes negatives inside them.
+Against Faster R-CNN (see Results), part of the gap is not about the architecture: stock RetinaNet treats ignored regions as background, while our Faster R-CNN excludes negatives inside them.
 
 Here is example of dense validation frame below, cars and pedestrians are found reliably, but there are a few mispredictions: several bicycles are predicted as motor.
 
@@ -158,11 +132,7 @@ With shared setup, COCO-pretrained YOLO11s reached 0.155 mAP and 0.143 on Public
 
 ## Query-based: RT-DETRv2
 
-RT-DETRv2 has no anchors and no NMS. It has 300 queries, which are slots that the model learns, and each query returns one box and one class.
-
-In training, every true box is paired with exactly one query (the Hungarian matching), and the other queries must say that there is no object. So a second box on the same object is punished, and the model learns not to make duplicates, which is why NMS is not needed.
-
-At the start most queries are wrong, so the loss is high and falls quickly (from about 5 to 1 in the first thousand updates).
+RT-DETRv2 has no anchors and no NMS: it predicts with 300 learned queries trained by Hungarian matching.
 
 For setup we use the COCO-pretrained PekingU/rtdetr_v2_r50vd with the same budget as the other models (5 epochs, 24,340 image exposures). We changed the loss so that queries inside ignore regions are not punished.
 
@@ -195,12 +165,12 @@ To make our pipline more stable notebook 12 trains on four folds over 17 videos 
 | Multi-label NMS | +1.88 | 15 of 17 |
 | Multi-label NMS and TTA | +2.01 | 16 of 17 |
 
-For the final submission the predefined rule chose the multi-laves NMS (Public 0.348). TTA added little in cross validation but 1. 1 to 1.6 points on Public for the same weights, possibly because about 16% of test frames are smaller than the 1280 px input, while no labeled frame is.
+For the final submission the predefined rule chose the multi-laves NMS (Public 0.348). TTA added little in cross validation but 1. 1 to 1.6 points on Public for the same weights, possibly because about 16% of test frames are smaller than the 1280 px input, while no labeled frame is (labeled frames are 1344 to 3840 px wide, test frames 680 to 1920 px, [01_eda, Section 6](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/01_eda.ipynb#6.-Resolution-and-split-differences)).
 
 We therefore selected the cross-validated model with multi-label NMS and TTA (0.359) and, as a second and different model, the notebook 11 submission (0.362).
 ## Results and analysis
 
-Validation mAP is on the official validation clips. The table shows the best experiment of each family, chosen by validation mAP (YOLO11s by Public, because VisDrone-DET contains frames of the validation clips, so it has no comparable validation score). All experiments are in the Appendix.
+Validation mAP is on the official validation clips. The table shows the best experiment of each family, chosen by validation mAP (for YOLO11s the clean-fold value, because VisDrone-DET contains frames of the validation clips, so it has no comparable validation score). All experiments are in the Appendix.
 
 | Family                | Best experiment                        | Val mAP | Public |
 | --------------------- | -------------------------------------- | ------- | ------ |
@@ -225,9 +195,6 @@ RT-DETRv2 is clearly the best, but it also trains the longest. YOLO11s trains th
 Car is the easiest class for all four families. Bus and motor are the hardest for the CNN-based models (AP 0.015 to 0.038 for bus and 0.067 to 0.090 for motor), and only RT-DETRv2 finds buses well (0.265). Bus is rare (0.8 percent of all boxes and only 264 boxes in validation), so its scores are unstable.
 
 Validation and Public can disagree: the larger image gave Faster R-CNN its best validation mAP (0.209) but its lowest Public score (0.194). Both sets are small (7 and about 14 clips).
-
-Limitations. Each run has one random seed, training is short, and we report the last epoch, not the
-best one. Times were measured on Kaggle and may vary between sessions.
 
 ## Final model and run instructions
 
