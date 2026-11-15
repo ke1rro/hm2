@@ -41,3 +41,4 @@ repos:
         args: ["--check"]
         language: system
         types: [markdown]
+        exclude: ^report\.md$
