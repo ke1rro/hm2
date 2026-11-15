@@ -84,7 +84,6 @@ We start from a model pretrained on COCO with a ResNet-50 backbone and train it 
 ![Ignore regions (pink) on a training frame](images/ignore_regions.png)
 
 On validation, Faster R-CNN reaches mAP 0.175, AP50 0.354 and AP small 0.081, and needs 94 ms per frame.
-я хочу шоб ти зліпив мій репорт на цій гілці з тим, шо зробив мій тімейт, на мейн гілці. до того що на мейні треба додати все момої частини пісял
 **Failure cases** \
 The figure shows the worst validation frames, not typical ones. At night, all 5 objects below 16 pixels are missed, probably because they are tiny and dark, so the first stage does not propose them. Both buses are missed (one gets a truck box), and buses are only 0.8 percent of all boxes. In a crowd, 21 of 25 motorcycles are missed although many riders are found, probably because a small motorcycle overlaps its rider. The score also falls during training (0.192 after epoch 1, 0.175 after epoch 5), possibly from overfitting.
 
@@ -109,9 +108,18 @@ The second stage trains on 512 boxes per image, and only 25 percent of them were
 
 ### Data experiments
 
-<!--
-notebooks/06_photometric_augmentation.ipynb, 07_input_resolution.ipynb and 09_repeat_factor_sampling.ipynb
--->
+Will describe very shortly, as they do not provide too much gain.
+
+On the Faster R-CNN baseline we changed one data setting at a time.
+
+| Change | Val mAP | AP small | Public |
+| --- | ---: | ---: | ---: |
+| Baseline | 0.175 | 0.081 | 0.204 |
+| Brightness, contrast and saturation jitter ([06, Section 7](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/06_photometric_augmentation.ipynb#7.-Interpretation-and-limitations)) | 0.179 | 0.075 | 0.199 |
+| Input 800/1280 instead of 640/1024 ([07, Section 7](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/07_input_resolution.ipynb#7.-Interpretation-and-limitations)) | 0.209 | 0.103 | 0.194 |
+| Repeat-factor sampling of rare classes ([09, Section 7](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/09_repeat_factor_sampling.ipynb#7.-Interpretation-and-limitations)) | 0.182 | 0.086 | 0.196 |
+
+All three raised validation mAP and lowered the Public score, so we adopted none of them. Only the larger input gave a clear validation gain, mostly on small objects, which later led us to train the final model at 1280 px.
 
 ## One-stage anchor-based: RetinaNet
 
@@ -126,11 +134,11 @@ We fine-tuned the COCO-pretrained RetinaNet ResNet-50 FPN V2 and ran four experi
 
 The initial frame size is up to 3840x2160 px, and our setup used batch size 2 and 5 epochs. Full size frames would not fit into our Tesla T4 budget, so we resized the shorter side to 640 px and the longer side to at most 1024 px (1024x576 for our frames).
 
-The smallest standard anchor is 32 px, so a 13 px box (the 10th percentile) reaches an IoU of at most $13^2/32^2 \approx 0.17$ with it and is never a regular positive. 
+The smallest standard anchor is 32 px, so a 13 px box (the 10th percentile) reaches an IoU of at most $13^2/32^2 \approx 0.17$ with it and is never a regular positive.
 
 Halved anchors start at 16 px (IoU up to 0.66). They raised AP50 in both data settings (+2.5 and +3.9 points at epoch 5), so more small objects are found. AP small barely moved (-0.1 and +0.5 points), however, and AP large fell (-4.0 and -1.7 points). The clearest loser is bus, the largest class: its AP fell from 0.038 to 0.009 with every fifth frame and from 0.087 to 0.013 with all frames ([03_retinanet_results, Section 5](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/03_retinanet_results.ipynb#5.-Class-AP-at-epoch-5)). Smaller anchors trade large objects for coarse detection of small ones, while precise localization of small objects stays limited by the resolution of the input.
 
-Just to prove that full dataset does not necessarily lead to better performance, training on all frames gave five times more updates but no consistent gain (-0.2 and +0.8 points mAP at epoch 5). That is why we stayed on using stride values in our experiments. 
+Just to prove that full dataset does not necessarily lead to better performance, training on all frames gave five times more updates but no consistent gain (-0.2 and +0.8 points mAP at epoch 5). That is why we stayed on using stride values in our experiments.
 
 Comparison with Faster R-CNN. Under the same budget RetinaNet with standard anchors reached 0.153 mAP and 0.053 AP small, against 0.175 and 0.081 for Faster R-CNN, and 0.160 against 0.204 on Public. The comparison is not purely about the architecture: stock RetinaNet treats ignored regions as background, while our Faster R-CNN excludes negatives inside them.
 
@@ -139,6 +147,14 @@ Here is example of dense validation frame below, cars and pedestrians are found 
 ![RetinaNet, standard anchors, every fifth frame: ground truth (left) and predictions with score at least 0.3 (right) on a dense validation frame. Several bicycles (yellow) are predicted as motor (purple).](images/retinanet_dense_scene.jpg)
 
 ## One-stage anchor-free: YOLO11s
+
+With shared setup, COCO-pretrained YOLO11s reached 0.155 mAP and 0.143 on Public, still rising at epoch 5 ([08, Section 7](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/08_yolo_baseline.ipynb#7.-Interpretation-and-limitations)). By object size it had the best AP small of the CNN detectors but the worst AP large:
+
+| Model | AP small | AP large |
+| --- | ---: | ---: |
+| RetinaNet | 0.053 | 0.317 |
+| Faster R-CNN | 0.081 | 0.334 |
+| YOLO11s | 0.092 | 0.285 |
 
 ## Query-based: RT-DETRv2
 
@@ -150,7 +166,7 @@ At the start most queries are wrong, so the loss is high and falls quickly (from
 
 For setup we use the COCO-pretrained PekingU/rtdetr_v2_r50vd with the same budget as the other models (5 epochs, 24,340 image exposures). We changed the loss so that queries inside ignore regions are not punished.
 
-Each experiment changes a singlя хочу шоб ти зліпив мій репорт на цій гілці з тим, шо зробив мій тімейт, на мейн гілці. до того що на мейні треба додати все момої частини пісялe thing. NWD is a way to compare boxes that stays stable for tiny boxes. Denoising queries are extra training-only queries that start from slightly shifted true boxes and learn to fix them, which speeds up learning.
+Each experiment changes a single thing. NWD is a way to compare boxes that stays stable for tiny boxes. Denoising queries are extra training-only queries that start from slightly shifted true boxes and learn to fix them, which speeds up learning.
 
 | Run           | Change                                                | Val mAP | Public |
 | ------------- | ----------------------------------------------------- | ------- | ------ |
@@ -166,6 +182,22 @@ Without NMS, RT-DETRv2 makes duplicate boxes (51 per 100 boxes at confidence 0.0
 
 ## Our pipeline
 
+We started with public YOLO11s trained on VisDrone-DET at 1280 px and changed its head to our eight classes ([10, Section 5](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/10_yolo11s_native_pipeline.ipynb#5.-Model-initialization)). Without any fine-tuning it already scored 0.280 on Public.
+
+Fine-tuning recipe: With the native Ultralytics recipe (SGD, lr0 0.002, mosaic, EMA, batch 16 on two T4), validation had the best metrics after first epoch and then declined, so kept epoch 1 checkpoint: 0.355 on a clean six-clip fold and 0.344 on Public ([10, Section 9](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/10_yolo11s_native_pipeline.ipynb#9.-Checkpoint-selection-on-the-clean-validation-fold)). Notebook 11 then tested single changes on that fold. A lower learning rate with test-time augmentation (TTA) reached 0.372 and 0.362 on Public, but it was the best of about 14 settings on six clips.
+
+To make our pipline more stable notebook 12 trains on four folds over 17 videos that VisDrone-DET does not contain and decides by a rule the best model. ([12, Section 7](https://nbviewer.org/github/ke1rro/hm2/blob/main/notebooks/12_yolo11s_grouped_cv.ipynb#7.-Paired-comparisons-and-the-decision-rule)).
+
+
+| Change vs notebook 10 recipe | CV mAP change | Videos improved |
+| --- | ---: | ---: |
+| Lower learning rate | -0.05 | 8 of 17 |
+| Multi-label NMS | +1.88 | 15 of 17 |
+| Multi-label NMS and TTA | +2.01 | 16 of 17 |
+
+For the final submission the predefined rule chose the multi-laves NMS (Public 0.348). TTA added little in cross validation but 1. 1 to 1.6 points on Public for the same weights, possibly because about 16% of test frames are smaller than the 1280 px input, while no labeled frame is.
+
+We therefore selected the cross-validated model with multi-label NMS and TTA (0.359) and, as a second and different model, the notebook 11 submission (0.362).
 ## Results and analysis
 
 Validation mAP is on the official validation clips. The table shows the best experiment of each family, chosen by validation mAP (YOLO11s by Public, because VisDrone-DET contains frames of the validation clips, so it has no comparable validation score). All experiments are in the Appendix.
@@ -173,9 +205,9 @@ Validation mAP is on the official validation clips. The table shows the best exp
 | Family                | Best experiment                        | Val mAP | Public |
 | --------------------- | -------------------------------------- | ------- | ------ |
 | Two-stage             | Faster R-CNN, image size 800 by 1280   | 0.209   | 0.194  |
-| One-stage, anchors    | RetinaNet, smaller anchors, all frames | 0.156   | 0.160  |
+| One-stage, anchors    | RetinaNet, smaller anchors, all frames | 0.159   | 0.160  |
 | Query-based           | RT-DETRv2 baseline                     | 0.246   | 0.253  |
-| One-stage, no anchors | YOLO11s, tuned final model             | –       | 0.362  |
+| One-stage, no anchors | YOLO11s, tuned final model             | 0.372 (a) | 0.362  |
 
 Same training for all families. The first runs of the four families use the same training (5 epochs, 24,340 image exposures), so they can be compared directly.
 
@@ -188,10 +220,6 @@ Same training for all families. The first runs of the four families use the same
 
 RT-DETRv2 is clearly the best, but it also trains the longest. YOLO11s trains the fastest and has the best AP small among the CNN-based models. All four families find small objects much worse than large ones (AP small 0.05 to 0.10, AP large 0.28 to 0.44). On frames with more than 100 objects, RT-DETRv2 scores 0.337, against 0.250 for Faster R-CNN and 0.189 for RetinaNet (YOLO11s was not measured). The figure shows the validation mAP after each epoch: RT-DETRv2 stays on top and keeps rising, RetinaNet and YOLO11s are still rising at epoch 5, and Faster R-CNN gets worse after epoch 1.
 
-<!--
-add YOLO11s to the sentence about frames with more than 100 objects.
--->
-
 ![Validation mAP after each epoch, same training for all four families](images/map_over_training.png)
 
 Car is the easiest class for all four families. Bus and motor are the hardest for the CNN-based models (AP 0.015 to 0.038 for bus and 0.067 to 0.090 for motor), and only RT-DETRv2 finds buses well (0.265). Bus is rare (0.8 percent of all boxes and only 264 boxes in validation), so its scores are unstable.
@@ -203,13 +231,12 @@ best one. Times were measured on Kaggle and may vary between sessions.
 
 ## Final model and run instructions
 
-<!--
-name the selected model, and explain how to rebuild it and its predictions -->
+Both selected submissions use YOLO11s initialized from VisDrone-DET, a 1280 px long side, confidence 0.001, NMS IoU 0.7 and at most 500 detections per frame, with test-time augmentation and seed 2026 ([config/yolo11s_native_1280.toml](config/yolo11s_native_1280.toml)).
 
-Faster R-CNN and RT-DETRv2 can be rebuilt with the configurations config/faster_rcnn_baseline.toml and
-config/rt_detr_baseline.toml (seed 2026), the Kaggle notebooks experiments/02_faster_rcnn_experiments_kaggle.ipynb
-and experiments/03_rt_detr_experiments_kaggle.ipynb, and the code in src/hm2/faster_rcnn.py and
-src/hm2/rt_detr.py. Tests run with uv run pytest.
+1. `yolo11s_grouped_cv_control_seed2026_epoch1_multi_label_tta.csv`: the notebook 10 recipe trained for one epoch on all 63 labeled clips, with multi-label NMS.
+2. `yolo11s_tuned_final.csv`: the epoch-1 checkpoint with lr0 0.0005 from notebook 11, trained on 57 clips.
+
+To rebuild them, run `uv sync --locked` and `uv run python scripts/build_yolo_bundle.py`, upload `dist/yolo_native` as the Kaggle dataset `hm2-yolo-native`, and run notebook 12 with `SHOULD_TRAIN = True` and `SHOULD_EXPORT_FINAL = True`, or notebook 11 with `SHOULD_TRAIN = True`, on two T4 GPUs. The optional `HM2_DRIVE_TOKEN` secret mirrors checkpoints to Drive so an interrupted run resumes. The earlier detectors are rebuilt from `config/faster_rcnn_baseline.toml`, `config/rt_detr_baseline.toml` and `experiments/02` and `03`. Tests run with `uv run pytest`.
 
 ## Appendix: all experiments
 
@@ -219,8 +246,8 @@ Validation mAP and Kaggle Public score of every experiment.
 | ---------------------------------------------- | ------- | ------ | ---------------- |
 | RetinaNet, standard anchors, every 5th frame   | 0.153   | 0.160  | notebooks 02, 03 |
 | RetinaNet, smaller anchors, every 5th frame    | 0.149   | 0.142  | notebooks 02, 03 |
-| RetinaNet, standard anchors, all frames        | 0.151   | 0.168  | notebooks 02, 03 |
-| RetinaNet, smaller anchors, all frames         | 0.156   | 0.160  | notebooks 02, 03 |
+| RetinaNet, standard anchors, all frames, epoch 1 | 0.158 | 0.168  | notebooks 02, 03 |
+| RetinaNet, smaller anchors, all frames, epoch 4 | 0.159  | 0.160  | notebooks 02, 03 |
 | Faster R-CNN (ignore-aware)                    | 0.175   | 0.204  | notebook 04      |
 | Faster R-CNN, brightness and contrast changes  | 0.179   | 0.199  | notebook 06      |
 | Faster R-CNN, showing rare classes more often  | 0.182   | 0.196  | notebook 09      |
@@ -232,10 +259,14 @@ Validation mAP and Kaggle Public score of every experiment.
 | RT-DETRv2, 500 queries                         | 0.236   | 0.233  | notebook 05      |
 | RT-DETRv2, 300 denoising queries               | 0.237   | 0.247  | notebook 05      |
 | YOLO11s, shared setup                          | 0.155   | 0.143  | notebook 08      |
-| YOLO11s from VisDrone-DET, no fine-tuning      | –       | 0.280  | notebook 10      |
-| YOLO11s, one epoch of fine-tuning, 1280 pixels | –       | 0.344  | notebook 10      |
-| YOLO11s, frames with stride 2                  | –       | 0.338  | notebook 10      |
-| YOLO11s, lower learning rate                   | –       | 0.346  | notebook 10      |
-| YOLO11s, frozen backbone                       | –       | 0.348  | notebook 10      |
-| YOLO11s, larger classification loss gain       | –       | 0.349  | notebook 10      |
-| YOLO11s, tuned final model                     | –       | 0.362  | notebook 10      |
+| YOLO11s from VisDrone-DET, no fine-tuning      | 0.303 (a) | 0.280  | notebook 10      |
+| YOLO11s, one epoch of fine-tuning, 1280 pixels | 0.355 (a) | 0.344  | notebook 10      |
+| YOLO11s, frames with stride 2                  | 0.355 (a) | 0.338  | notebook 11      |
+| YOLO11s, lower learning rate                   | 0.363 (a) | 0.346  | notebook 11      |
+| YOLO11s, frozen backbone                       | 0.350 (a) | 0.348  | notebook 11      |
+| YOLO11s, larger classification loss gain       | 0.354 (a) | 0.349  | notebook 11      |
+| YOLO11s, tuned final model                     | 0.372 (a) | 0.362  | notebook 11      |
+| YOLO11s, all clips, multi-label NMS            | 0.336 (b) | 0.348  | notebook 12      |
+| YOLO11s, all clips, multi-label NMS and TTA    | 0.337 (b) | 0.359  | notebook 12      |
+
+(a) Clean six-clip fold of notebook 10, because VisDrone-DET contains frames of six of the seven official validation clips. (b) Mean over the four folds of the grouped cross-validation over 17 videos in notebook 12. Neither is comparable with the official validation split.
