@@ -80,7 +80,7 @@ On the finished baseline we changed only the number of proposals per image at in
 **Share of positive boxes.** \
 The second stage trains on 512 boxes per image, of which only 25 percent were positive, so we raised the share to 50 percent: validation mAP hardly changed (0.177 against 0.175), bus improved most (0.039 against 0.015) and Public rose from 0.204 to 0.213, the best of our Faster R-CNN runs. With one seed and 14 test clips this gain may be noise, and the score still falls after epoch 1 (0.200 after epoch 1, 0.177 after epoch 5).
 
-### Data experiments
+## Data experiments
 
 On the Faster R-CNN baseline we tested three data changes, one at a time: color jitter for the lighting differences between videos, a larger input for small objects, and repeat-factor sampling, which shows images with rare classes more often.
 
