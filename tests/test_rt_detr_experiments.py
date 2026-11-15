@@ -9,7 +9,6 @@ from torch import nn
 from hm2.drive_api import DriveApi
 from hm2.rt_detr import GradientClippedAdamW
 from hm2.rt_detr_experiments import (
-    OPTIONAL_EXPERIMENTS,
     RT_DETR_MODULES,
     RUN_ORDER,
     build_rt_detr_experiment_config,
@@ -28,8 +27,8 @@ B1_CONFIG = ROOT / "config/faster_rcnn_baseline.toml"
 
 
 def test_configuration_lists_the_experiments_in_the_agreed_order() -> None:
-    """Catch a run order that differs from baseline, NWD, queries, denoising, shared LR."""
-    assert list_experiments(CONFIG) == [*RUN_ORDER, *OPTIONAL_EXPERIMENTS]
+    """Catch a run order that differs from baseline, NWD, queries, denoising."""
+    assert list_experiments(CONFIG) == list(RUN_ORDER)
     assert all(experiment_label(name) != name for name in list_experiments(CONFIG))
 
 
@@ -40,7 +39,6 @@ def test_each_experiment_changes_exactly_its_own_setting() -> None:
         "nwd_loss": ("loss", "box_loss", "nwd"),
         "queries_500": ("model", "num_queries", 500),
         "denoising_300": ("model", "num_denoising", 300),
-        "shared_lr": ("training", "backbone_learning_rate", 0.0001),
     }
     for name, (table, key, value) in changes.items():
         settings = load_rt_detr_settings(CONFIG, name)

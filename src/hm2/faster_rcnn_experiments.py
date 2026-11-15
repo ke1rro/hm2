@@ -27,6 +27,7 @@ from hm2.evaluation import predictions_to_coco
 from hm2.experiment_checkpoint import load_checkpoint, publish_snapshot, save_checkpoint, write_json
 from hm2.faster_rcnn import (
     IgnoreAwareDetectionDataset,
+    IgnoreAwareRegionProposalNetwork,
     build_faster_rcnn,
     summarize_ignore_assignment,
 )
@@ -37,7 +38,10 @@ from hm2.tiny_subset import flight_prefix
 
 LOGGER = logging.getLogger(__name__)
 
-EXPERIMENT_LABELS = {"baseline_stride5": "Faster R-CNN baseline (every fifth frame)"}
+EXPERIMENT_LABELS = {
+    "baseline_stride5": "Faster R-CNN baseline (every fifth frame)",
+    "positive_fraction_0_5": "Faster R-CNN with 50 percent positive RoIs (every fifth frame)",
+}
 RECORDED_MODULES = (
     "hm2.data",
     "hm2.dense_evaluation",
@@ -963,6 +967,79 @@ def load_final_model(output: Path, device: torch.device) -> tuple[FasterRCNN, di
     model = build_faster_rcnn(**model_arguments)
     model.load_state_dict(state["model"])
     return model.to(device).eval(), config
+
+
+def set_proposal_budget(model: FasterRCNN, budget: int) -> int:
+    """Set how many proposals per image the second stage receives at inference.
+
+    Args:
+        model: Detector built by build_faster_rcnn.
+        budget: Proposals kept after NMS per image.
+
+    Returns:
+        The previous budget, so a caller can restore it.
+    """
+    rpn = model.rpn
+    if not isinstance(rpn, IgnoreAwareRegionProposalNetwork):
+        raise TypeError("Build the model with build_faster_rcnn to change its proposal budget.")
+    previous = rpn._post_nms_top_n["testing"]
+    rpn._post_nms_top_n["testing"] = budget
+    return previous
+
+
+def evaluate_proposal_budgets(
+    model: FasterRCNN,
+    image_root: Path,
+    source_root: Path,
+    validation: pl.DataFrame,
+    objects: pl.DataFrame,
+    ignored: pl.DataFrame,
+    evaluation_settings: dict,
+    budgets: tuple[int, ...],
+    output: Path,
+    device: torch.device,
+) -> list[dict]:
+    """Validate one trained detector with several inference-time RPN proposal budgets.
+
+    Only the number of proposals kept after NMS changes. The weights and the training
+    recipe stay as they were, so the table isolates what the first stage contributes.
+
+    Args:
+        model: Trained detector built by build_faster_rcnn.
+        image_root: Directory that holds the images, local or staged.
+        source_root: Competition root with val/annotations_coco.json.
+        validation: Official validation frames.
+        objects: Prepared target objects.
+        ignored: Prepared ignored regions.
+        evaluation_settings: The evaluation table, with batch size and worker count.
+        budgets: Proposals per image kept after NMS at inference.
+        output: Experiment directory that receives proposal_budgets.json.
+        device: Device that runs the model.
+
+    Returns:
+        One record per budget with COCO metrics and inference timing.
+    """
+    original = set_proposal_budget(model, budgets[0])
+    rows = []
+    for budget in budgets:
+        set_proposal_budget(model, budget)
+        loader = make_loader(
+            IgnoreAwareDetectionDataset(image_root, validation, objects, ignored),
+            evaluation_settings["batch_size"],
+            evaluation_settings["num_workers"],
+            device,
+        )
+        predictions, image_ids, inference = predict_loader(model, loader, device)
+        metrics = evaluate_detections(
+            source_root / "val/annotations_coco.json",
+            predictions_to_coco(predictions, image_ids),
+            image_ids,
+        )
+        rows.append({"proposals": budget, "metrics": metrics, "inference": inference})
+        LOGGER.info("Proposals %s: mAP %s", budget, metrics["max_dets_100"]["map"])
+    set_proposal_budget(model, original)
+    write_json(output / "proposal_budgets.json", rows)
+    return rows
 
 
 def measure_inference_speed(

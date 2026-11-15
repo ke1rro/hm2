@@ -38,13 +38,11 @@ from hm2.rt_detr import (
 LOGGER = logging.getLogger(__name__)
 
 RUN_ORDER = ("baseline_q300", "nwd_loss", "queries_500", "denoising_300")
-OPTIONAL_EXPERIMENTS = ("shared_lr",)
 EXPERIMENT_LABELS = {
     "baseline_q300": "RT-DETRv2 baseline (300 queries)",
     "nwd_loss": "RT-DETRv2 with NWD box loss",
     "queries_500": "RT-DETRv2 with 500 queries",
     "denoising_300": "RT-DETRv2 with 300 denoising queries",
-    "shared_lr": "RT-DETRv2 with one learning rate",
 }
 RT_DETR_MODULES = (*RECORDED_MODULES, "hm2.rt_detr", "hm2.rt_detr_experiments")
 RECORD_FILES = (
