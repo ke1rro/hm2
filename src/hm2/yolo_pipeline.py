@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import shutil
 import threading
 import time
@@ -16,7 +17,9 @@ import numpy as np
 import polars as pl
 import torch
 import ultralytics
+from ultralytics.models.yolo.detect import DetectionPredictor
 from ultralytics.nn.tasks import DetectionModel
+from ultralytics.utils import nms, ops
 
 from hm2.data import CLASS_NAMES
 from hm2.dense_evaluation import SUBMISSION_DETECTION_CAP, evaluate_coco_max_dets
@@ -55,6 +58,8 @@ PASSTHROUGH_TRAINING_KEYS = (
     "hsv_s",
     "hsv_v",
 )
+OPTIONAL_TRAINING_KEYS = ("freeze", "box", "cls", "dfl")
+OPTIONAL_INFERENCE_KEYS = ("augment", "multi_label", "degraded_long_side")
 
 
 class Detector(Protocol):
@@ -71,6 +76,8 @@ class Detector(Protocol):
         half: bool,
         device: int | str,
         verbose: bool,
+        augment: bool,
+        predictor: type | None,
     ) -> list:
         """Return one result with boxes.xyxy, boxes.conf and boxes.cls per input image."""
         ...
@@ -128,7 +135,36 @@ def training_arguments(
         "save": True,
         "plots": True,
         **{key: training[key] for key in PASSTHROUGH_TRAINING_KEYS},
+        **{key: training[key] for key in OPTIONAL_TRAINING_KEYS if key in training},
     }
+
+
+def apply_experiment(settings: dict, overrides: dict) -> dict:
+    """Return pipeline settings with one experiment's table values replaced.
+
+    Only existing keys of the dataset, training and inference tables may change, plus the
+    optional Ultralytics training keys freeze, box, cls and dfl and the inference keys
+    augment, multi_label and degraded_long_side, so a misspelled override fails instead of
+    being ignored.
+
+    Args:
+        settings: Base pipeline configuration tables.
+        overrides: Experiment tables keyed by dataset, training or inference.
+
+    Returns:
+        A new configuration with the overridden values.
+    """
+    merged = {table: dict(values) for table, values in settings.items()}
+    for table, values in overrides.items():
+        if table == "description":
+            continue
+        optional = {"training": OPTIONAL_TRAINING_KEYS, "inference": OPTIONAL_INFERENCE_KEYS}
+        allowed = set(settings[table]) | set(optional.get(table, ()))
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(f"Unknown {table} settings: {sorted(unknown)}")
+        merged[table].update(values)
+    return merged
 
 
 def plan_epochs(
@@ -166,10 +202,46 @@ def plan_epochs(
     return min(epochs, training_settings["max_epochs"])
 
 
-def _load_resized(path: Path, image_size: int) -> np.ndarray:
+class MultiLabelDetectionPredictor(DetectionPredictor):
+    """Ultralytics detection predictor whose NMS may keep several classes for one box.
+
+    The stock predictor keeps only the highest-scoring class of every candidate box. The
+    Ultralytics validator instead keeps every class above the confidence threshold, so an
+    ambiguous box can be ranked as, for example, both van and car.
+    """
+
+    def postprocess(self, preds, img, orig_imgs, **kwargs) -> list:
+        """Apply class-aware multi-label NMS and wrap the boxes as Ultralytics results.
+
+        Args:
+            preds: Raw network predictions.
+            img: Preprocessed input batch.
+            orig_imgs: Images before preprocessing, as a list or a tensor.
+            **kwargs: Unused keyword arguments of the base predictor.
+
+        Returns:
+            One Ultralytics Results object per image.
+        """
+        detections = nms.non_max_suppression(
+            preds,
+            self.args.conf,
+            self.args.iou,
+            self.args.classes,
+            self.args.agnostic_nms,
+            multi_label=True,
+            max_det=self.args.max_det,
+        )
+        if not isinstance(orig_imgs, list):
+            orig_imgs = ops.convert_torch2numpy_batch(orig_imgs)[..., ::-1]
+        return self.construct_results(detections, img, orig_imgs)
+
+
+def _load_resized(path: Path, image_size: int, degraded_long_side: int | None) -> np.ndarray:
     image = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError(f"Unreadable image: {path}")
+    if degraded_long_side is not None:
+        image = resize_long_side(image, degraded_long_side)
     return resize_long_side(image, image_size)
 
 
@@ -196,7 +268,9 @@ def predict_frames(
         image_root: Directory against which relative_path is resolved.
         image_size: Longer side of the network input in pixels.
         inference_settings: The inference table with confidence, iou, max_detections,
-            batch and half.
+            batch, half and optionally augment for Ultralytics test-time augmentation,
+            multi_label for multi-label NMS and degraded_long_side, which first shrinks each
+            frame to that long side to simulate a low-resolution source.
         device: CUDA device index or "cpu".
         loader_threads: Threads used to decode and resize frames.
 
@@ -214,7 +288,12 @@ def predict_frames(
 
         def submit(batch: pl.DataFrame) -> list[Future[np.ndarray]]:
             return [
-                executor.submit(_load_resized, image_root / path, image_size)
+                executor.submit(
+                    _load_resized,
+                    image_root / path,
+                    image_size,
+                    inference_settings.get("degraded_long_side"),
+                )
                 for path in batch["relative_path"]
             ]
 
@@ -232,6 +311,12 @@ def predict_frames(
                 half=inference_settings["half"],
                 device=device,
                 verbose=False,
+                augment=inference_settings.get("augment", False),
+                predictor=(
+                    MultiLabelDetectionPredictor
+                    if inference_settings.get("multi_label", False)
+                    else None
+                ),
             )
             for row, image, output in zip(
                 batch.iter_rows(named=True), images, outputs, strict=True
@@ -574,6 +659,80 @@ def remap_detection_head(
     return provenance
 
 
+def _load_network(path: Path) -> torch.nn.Module:
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    return (checkpoint.get("ema") or checkpoint["model"]).float()
+
+
+def average_checkpoints(sources: list[Path], weights: list[float], destination: Path) -> dict:
+    """Write a checkpoint whose floating-point tensors are a weighted sum of the sources.
+
+    The sources must share one architecture and class head, such as the converted initial
+    checkpoint and its fine-tuned descendants. Interpolating an initial and a fine-tuned
+    checkpoint uses the weights 1 - alpha and alpha; a uniform average of several runs uses
+    equal weights. Batch-normalization statistics are averaged like parameters, and integer
+    buffers are copied from the first source.
+
+    Args:
+        sources: Ultralytics detection checkpoints.
+        weights: Coefficient of each source, used as given.
+        destination: Path of the written checkpoint.
+
+    Returns:
+        Provenance with the SHA256 and coefficient of every source.
+    """
+    networks = [_load_network(source) for source in sources]
+    states = [network.state_dict() for network in networks]
+    merged = {
+        name: (
+            sum(weight * state[name] for weight, state in zip(weights, states, strict=True))
+            if value.is_floating_point()
+            else value
+        )
+        for name, value in states[0].items()
+    }
+    network = networks[0]
+    network.load_state_dict(merged, strict=True)
+    provenance = {"sources": []}
+    for source, weight in zip(sources, weights, strict=True):
+        with source.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        provenance["sources"].append({"path": str(source), "sha256": digest, "weight": weight})
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "model": network.half(),
+            "train_args": {"task": "detect", "single_cls": False},
+            "epoch": -1,
+            "date": None,
+            "version": ultralytics.__version__,
+            "weight_average": provenance,
+        },
+        destination,
+    )
+    return provenance
+
+
+def epoch_checkpoints(weights_directory: Path) -> dict[int, Path]:
+    """Map completed epoch counts to the per-epoch checkpoints of a native training run.
+
+    With save_period=1, Ultralytics writes epoch{index}.pt after every epoch, where index is
+    the zero-based epoch, so epoch0.pt holds the weights after one completed epoch.
+
+    Args:
+        weights_directory: The weights directory of a native Ultralytics run.
+
+    Returns:
+        Checkpoint paths keyed by the number of completed epochs.
+    """
+    matches = (re.fullmatch(r"epoch(\d+)\.pt", path.name) for path in weights_directory.iterdir())
+    return {
+        int(match.group(1)) + 1: weights_directory / match.group(0)
+        for match in matches
+        if match is not None
+    }
+
+
 def write_coco_subset(source_root: Path, frames: pl.DataFrame, destination: Path) -> list[int]:
     """Write one COCO file for frames from either official split, keeping crowd regions.
 
@@ -617,3 +776,80 @@ def write_coco_subset(source_root: Path, frames: pl.DataFrame, destination: Path
         )
     )
     return [new_ids[key] for key in keys]
+
+
+def evaluate_checkpoints(
+    checkpoints: dict[str, Path],
+    frames: pl.DataFrame,
+    image_ids: list[int],
+    annotation_path: Path,
+    image_root: Path,
+    image_size: int,
+    inference_settings: dict,
+    device: int | str,
+) -> tuple[list[dict], dict[str, list[dict[str, np.ndarray]]]]:
+    """Predict and evaluate several checkpoints on the same frames with one protocol.
+
+    Args:
+        checkpoints: Checkpoint paths keyed by candidate name.
+        frames: Evaluated frame metadata with relative_path, image_width and image_height.
+        image_ids: COCO image identifiers aligned with frames.
+        annotation_path: COCO file with the ground truth of the frames.
+        image_root: Directory against which relative_path is resolved.
+        image_size: Longer side of the network input in pixels.
+        inference_settings: The inference table passed to predict_frames.
+        device: CUDA device index or "cpu".
+
+    Returns:
+        One metric row per candidate and the predictions keyed by candidate name.
+    """
+    from ultralytics import YOLO
+
+    rows, predictions = [], {}
+    for name, path in checkpoints.items():
+        started = time.monotonic()
+        predictions[name] = predict_frames(
+            YOLO(str(path)), frames, image_root, image_size, inference_settings, device
+        )
+        seconds = time.monotonic() - started
+        metrics = evaluate_predictions(
+            annotation_path, coco_detections(predictions[name], image_ids), image_ids
+        )
+        rows.append(
+            {
+                "candidate": name,
+                "map_100": metrics["max_dets_100"]["map"],
+                "map_500": metrics["max_dets_500"]["map"],
+                "ap50": metrics["max_dets_100"]["ap50"],
+                "ap75": metrics["max_dets_100"]["ap75"],
+                "ap_small": metrics["max_dets_100"]["ap_small"],
+                "ap_medium": metrics["max_dets_100"]["ap_medium"],
+                "ap_large": metrics["max_dets_100"]["ap_large"],
+                "per_class_ap": metrics["max_dets_100"]["per_class_ap"],
+                "milliseconds_per_frame": 1000 * seconds / frames.height,
+            }
+        )
+    return rows, predictions
+
+
+def restore_run_from_mirror(mirror_directory: Path, run_directory: Path) -> int | None:
+    """Copy a restored checkpoint mirror into a native run directory and read its epoch.
+
+    Args:
+        mirror_directory: Flat directory with last.pt, best.pt and results.csv from Drive.
+        run_directory: Native Ultralytics run directory to populate when it has no last.pt.
+
+    Returns:
+        The epoch stored in last.pt, -1 for a finished run, or None when nothing exists.
+    """
+    last = run_directory / "weights" / "last.pt"
+    if not last.is_file() and (mirror_directory / "last.pt").is_file():
+        (run_directory / "weights").mkdir(parents=True, exist_ok=True)
+        for name in ("last.pt", "best.pt"):
+            if (mirror_directory / name).is_file():
+                shutil.copy2(mirror_directory / name, run_directory / "weights" / name)
+        if (mirror_directory / "results.csv").is_file():
+            shutil.copy2(mirror_directory / "results.csv", run_directory / "results.csv")
+    if not last.is_file():
+        return None
+    return torch.load(last, map_location="cpu", weights_only=False)["epoch"]

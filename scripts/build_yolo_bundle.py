@@ -11,7 +11,14 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 LOGGER = logging.getLogger(__name__)
 BUNDLE_NAME = "yolo_native_project.zip"
-CONFIG_NAME = "config/yolo11s_native_1280.toml"
+CONFIG_NAMES = (
+    "config/yolo11s_native_1280.toml",
+    "config/yolo11s_native_experiments.toml",
+    "config/yolo11s_grouped_cv.toml",
+    "config/visdrone_det_frame_index.json",
+)
+BASELINE_NAME = "yolo11s_native_1280_best.pt"
+BASELINE_SHA256 = "d821492586b4238ad9dea6bb1a95120652346e5573e8d9a08000b8dc2f74cb84"
 VISDRONE_URL = (
     "https://huggingface.co/dronefreak/visdrone-yolo11s/resolve/"
     "c1c9c8f559a7ebdc5271f8d5695b026dd22420cc/best.pt"
@@ -21,9 +28,11 @@ VISDRONE_CHANNELS = (0, 2, 3, 4, 5, 6, 8, 9)
 INIT_NAME = "yolo11s_visdrone_det_8cls.pt"
 NOTEBOOK_IMPORTS = (
     "hm2.data",
+    "hm2.detection_data",
     "hm2.drive_api",
     "hm2.experiment_checkpoint",
     "hm2.faster_rcnn_experiments",
+    "hm2.grouped_validation",
     "hm2.visualization",
     "hm2.yolo_data",
     "hm2.yolo_pipeline",
@@ -61,17 +70,21 @@ def build_initial_checkpoint(root: Path, directory: Path) -> dict:
     return {**provenance, "source_url": VISDRONE_URL, "converted_sha256": digest}
 
 
-def build_bundle(root: Path, output: Path, initial_checkpoint: Path) -> dict:
-    """Build and verify the code ZIP read by the YOLO pipeline notebook.
+def build_bundle(
+    root: Path, output: Path, initial_checkpoint: Path, baseline_checkpoint: Path
+) -> dict:
+    """Build and verify the code ZIP read by the YOLO pipeline notebooks.
 
-    The archive holds src/hm2, the pipeline configuration and the initial checkpoint under
-    weights/. Every entry is compared with its source bytes, and the notebook's imports are
-    resolved from a fresh extraction so a missing module fails here instead of on Kaggle.
+    The archive holds src/hm2, the pipeline configurations, the initial checkpoint and the
+    fine-tuned baseline checkpoint under weights/. The baseline must be the checkpoint of the
+    0.34389 Public submission. Every entry is compared with its source bytes, and the
+    notebooks' imports are resolved from a fresh extraction so a missing module fails here.
 
     Args:
         root: Repository root.
         output: Destination ZIP path; no cloud files are changed.
         initial_checkpoint: Converted eight-class checkpoint used to start training.
+        baseline_checkpoint: best.pt of the Kaggle run that notebook 11 compares against.
 
     Returns:
         ZIP path, size, entry count and SHA256.
@@ -79,8 +92,12 @@ def build_bundle(root: Path, output: Path, initial_checkpoint: Path) -> dict:
     entries = {
         path.relative_to(root).as_posix(): path for path in sorted((root / "src/hm2").glob("*.py"))
     }
-    entries[CONFIG_NAME] = root / CONFIG_NAME
+    with baseline_checkpoint.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != BASELINE_SHA256:
+            raise ValueError("The baseline checkpoint is not the one behind the submission.")
+    entries |= {name: root / name for name in CONFIG_NAMES}
     entries[f"weights/{initial_checkpoint.name}"] = initial_checkpoint
+    entries[f"weights/{BASELINE_NAME}"] = baseline_checkpoint
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(".incoming")
     hashes = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in entries.items()}
@@ -165,6 +182,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build verified YOLO pipeline inputs.")
     parser.add_argument("--output-directory", type=Path, default=root / "dist/yolo_native")
     parser.add_argument("--staging-directory", type=Path, default=root / "data/weights")
+    baseline_run = root / "runs/yolo_native/yolo11s_native_1280_stride4_seed2026"
+    parser.add_argument(
+        "--baseline-checkpoint",
+        type=Path,
+        default=baseline_run / "yolo11s_native_1280/weights/best.pt",
+    )
     parser.add_argument("--offline-assets", action="store_true")
     parser.add_argument("--python-version", default="3.13")
     arguments = parser.parse_args()
@@ -182,6 +205,7 @@ def main() -> None:
         root,
         arguments.output_directory / BUNDLE_NAME,
         arguments.staging_directory / INIT_NAME,
+        arguments.baseline_checkpoint,
     )
     LOGGER.info("Verified bundle: %s", bundle)
     if arguments.offline_assets:
